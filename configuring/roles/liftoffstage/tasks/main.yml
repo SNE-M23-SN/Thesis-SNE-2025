@@ -41,7 +41,7 @@
 
 
 - name: Create LiftOffStage Namespace
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -62,7 +62,7 @@
 
 
 - name: Create image pull secret for private registry
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     state: present
     kubeconfig: /home/ubuntu/.kube/config
     definition:
@@ -170,7 +170,7 @@
 # ===== PostgreSQL CI Service =====
 
 - name: Create PostgreSQL CI PersistentVolume
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -192,7 +192,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create PostgreSQL CI PersistentVolumeClaim
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -213,7 +213,7 @@
 
 
 - name: Create PostgreSQL CI Deployment
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -308,7 +308,7 @@
 
 
 - name: Create PostgreSQL CI Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -332,7 +332,7 @@
 
 # ===== RabbitMQ Service =====
 - name: Create RabbitMQ PersistentVolume
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -355,7 +355,7 @@
 
 
 - name: Create RabbitMQ PersistentVolumeClaim
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -377,7 +377,7 @@
 
 
 - name: Create RabbitMQ Deployment
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -459,7 +459,7 @@
 
 
 - name: Create RabbitMQ Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -491,7 +491,7 @@
 # ===== Jenkins Service =====
 
 - name: Create Jenkins PersistentVolume
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -515,7 +515,7 @@
 
 
 - name: Create Jenkins PersistentVolumeClaim
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -536,7 +536,7 @@
 
 
 - name: Create Jenkins Deployment
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -659,7 +659,7 @@
 
 
 - name: Create Jenkins Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
@@ -688,7 +688,7 @@
 
 # ===== Wait for deployments and display information =====
 - name: Wait for PostgreSQL CI deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -701,7 +701,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Wait for RabbitMQ deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -714,7 +714,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Wait for Jenkins deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -762,7 +762,7 @@
       🔄 Deployment Method: Host path mounts (Docker Compose equivalent)
 
 - name: Create service summary ConfigMap
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_liftoffstage }}"
     definition:
