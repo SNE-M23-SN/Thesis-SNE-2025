@@ -9,8 +9,8 @@ terraform {
       endpoints = {
         s3 = "https://storage.yandexcloud.net"
       }
-      bucket = var.bucket_name
-      region = var.bucket_region
+      bucket = "tofuz"
+      region = "ru-central1-a"
       key    = "terraform.tfstate"
   
       skip_region_validation      = true
@@ -281,14 +281,6 @@ variable "yandex_token" {
 
 variable "yandex_cloud_id" {
   description = "Yandex Cloud ID"
-}
-
-variable "bucket_name" {
-  type = string
-}
-
-variable "bucket_region" {
-  type = string
 }
 
 variable "public_key" {
