@@ -57,7 +57,7 @@
 
 # ===== Create Namespace =====
 - name: Create SecondStage Namespace
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -135,7 +135,7 @@
 
 
 - name: Create image pull secret for private registry
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     state: present
     kubeconfig: /home/ubuntu/.kube/config
     definition:
@@ -223,7 +223,7 @@
 
 # ===== Create ConfigMap and Secrets =====
 - name: Create SecondStage ConfigMap
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
@@ -254,7 +254,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create SecondStage Secrets
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
@@ -281,7 +281,7 @@
 
 # ===== Deploy Diploma Application =====
 - name: Deploy SecondStage Diploma Application
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
@@ -405,7 +405,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create SecondStage Diploma Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
@@ -429,7 +429,7 @@
 
 
 - name: Wait for Diploma deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -444,7 +444,7 @@
 
 # ===== Deploy API Application =====
 - name: Deploy SecondStage API Application
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
@@ -554,7 +554,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create SecondStage API Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
@@ -620,7 +620,7 @@
 
 # ===== Wait for Applications to be Ready =====
 - name: Wait for API deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -633,7 +633,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Wait for Diploma deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -743,7 +743,7 @@
          4. Verify Google Gemini API access through VPN
 
 - name: Create deployment summary ConfigMap
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_secondstage }}"
     definition:
