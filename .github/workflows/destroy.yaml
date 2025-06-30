@@ -1,0 +1,31 @@
+name: Destroy The Infrastructure
+
+on:
+  workflow_dispatch:
+
+
+env:
+  TF_LOG: INFO
+  TF_INPUT: false
+
+jobs:
+  OpenTofu_destroy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./provisioning
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup OpenTofu
+      uses: opentofu/setup-opentofu@v1
+      with:
+        tofu_version: 1.6.2
+
+    - name: OpenTofu Init
+      run: tofu init -backend-config="access_key=${{ secrets.ACCESS_KEY }}" -backend-config="secret_key=${{ secrets.SECRET_KEY }}"
+
+    - name: OpenTofu Destroy
+      run: tofu destroy -auto-approve -var yandex_token=${{ secrets.YANDEX_TOKEN }} -var yandex_cloud_id=${{ secrets.YANDEX_CLOUD_ID }}
