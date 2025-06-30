@@ -46,7 +46,7 @@
 
 # ===== Create Namespace =====
 - name: Create ThirdStage Namespace
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -65,7 +65,7 @@
 
 
 - name: Create image pull secret for private registry
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     state: present
     kubeconfig: /home/ubuntu/.kube/config
     definition:
@@ -202,7 +202,7 @@
 
 # ===== Create Kubernetes Resources =====
 - name: Create ConfigMap for ThirdStage environment variables
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_thirdstage }}"
     definition:
@@ -219,7 +219,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Deploy ThirdStage Dashboard Application
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_thirdstage }}"
     definition:
@@ -288,7 +288,7 @@
 
 
 - name: Create ThirdStage Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_thirdstage }}"
     definition:
@@ -316,7 +316,7 @@
 
 # ===== Wait for Application to be Ready =====
 - name: Wait for ThirdStage deployment to be ready
-  community.kubernetes.k8s_info:
+  kubernetes.core.k8s_info:
     kubeconfig: /home/ubuntu/.kube/config
     api_version: apps/v1
     kind: Deployment
@@ -392,7 +392,7 @@
          4. Configure alerts and notifications as needed
 
 - name: Create deployment summary ConfigMap
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_thirdstage }}"
     definition:
