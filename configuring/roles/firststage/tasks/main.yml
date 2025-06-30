@@ -43,7 +43,7 @@
   delegate_to: "{{ groups['master'][0] }}"    
 
 - name: Create namespace for FirstStage application
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     definition:
       apiVersion: v1
@@ -62,7 +62,7 @@
 
 
 - name: Create image pull secret for private registry
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     state: present
     kubeconfig: /home/ubuntu/.kube/config
     definition:
@@ -117,7 +117,7 @@
 
 
 - name: Create ConfigMap for FirstStage environment variables
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -136,7 +136,7 @@
 
 
 - name: Create Secret for FirstStage sensitive data
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -157,7 +157,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create PersistentVolume for PostgreSQL data
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -177,7 +177,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create PersistentVolumeClaim for PostgreSQL
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -195,7 +195,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Deploy PostgreSQL for FirstStage
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -259,7 +259,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Create PostgreSQL Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -277,7 +277,7 @@
   delegate_to: "{{ groups['master'][0] }}"
 
 - name: Deploy FirstStage Application
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
@@ -326,7 +326,7 @@
 
 
 - name: Create FirstStage Service
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     namespace: "{{ ns_firststage }}"
     definition:
