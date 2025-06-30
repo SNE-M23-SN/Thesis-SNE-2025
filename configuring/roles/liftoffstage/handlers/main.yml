@@ -2,7 +2,7 @@
 # LiftOffStage Role Handlers
 
 - name: restart postgres-ci deployment
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     state: present
     definition:
@@ -20,7 +20,7 @@
     wait_timeout: 300
 
 - name: restart rabbitmq deployment
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     state: present
     definition:
@@ -38,7 +38,7 @@
     wait_timeout: 300
 
 - name: restart jenkins-liftoff deployment
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     state: present
     definition:
@@ -56,7 +56,7 @@
     wait_timeout: 300
 
 - name: reload liftoffstage services info configmap
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     kubeconfig: /home/ubuntu/.kube/config
     state: present
     definition:
