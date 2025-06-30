@@ -28,5 +28,9 @@ jobs:
     - name: OpenTofu Init
       run: tofu init -backend-config="access_key=${{ secrets.ACCESS_KEY }}" -backend-config="secret_key=${{ secrets.SECRET_KEY }}"
 
+    - name: OpenTofu Plan
+      id: plan
+      run: tofu plan -no-color -out=tfplan -var yandex_token=${{ secrets.YANDEX_TOKEN }} -var yandex_cloud_id=${{ secrets.YANDEX_CLOUD_ID }} 
+
     - name: OpenTofu Destroy
       run: tofu destroy -auto-approve -var yandex_token=${{ secrets.YANDEX_TOKEN }} -var yandex_cloud_id=${{ secrets.YANDEX_CLOUD_ID }}
