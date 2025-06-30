@@ -1,0 +1,19 @@
+---
+# FirstStage Preparation Role Default Variables
+
+
+
+# ===== Target Node Configuration =====
+firststage_target_node: "worker"
+sast_target_node: "sast"
+
+# ===== File Permissions =====
+file_owner: "ubuntu"
+file_group: "ubuntu"
+
+# ===== Certificate Configuration =====
+docker_server_hostname: "docker-host"
+docker_server_ip: "{{ (hostvars[sast_target_node | default('worker')]['ansible_host']) }}"
+# docker_server_ip will default to the target node's IP if not specified
+force_cert_regeneration: false
+

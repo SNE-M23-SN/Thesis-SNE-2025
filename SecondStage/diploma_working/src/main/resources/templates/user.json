@@ -1,0 +1,74 @@
+{
+  "action": "detect_anomalies",
+  "jobName": "<conversationId>",
+  "buildId": <buildNumber>,
+  "instructions": "Detect anomalies for build <conversationId>#<buildNumber> based on the chat history of its logs. Compare with the last 5 historical builds of job <conversationId> (different build_numbers) to identify: security regressions, secrets leakage, new vulnerabilities, build instability, agent crashes, dependency issues, and anomalous patterns. Use chat history filtered by build_number=<buildNumber> for the current build’s logs. Carefully review logs from sast_scanning type. Calculate a risk score (0-100) based on anomaly severity (Critical=30 points, High=20, Medium=10, Warning=5). Include the change in risk score compared to the previous build. Provide detailed insights on security trends, critical issues (e.g., secret exposure), dependency management, and actionable recommendations. Include a list of all processed logs with their types and timestamps.",
+  "scope": "Compare with last 5 historical builds of job <conversationId>",
+  "logFilter": "build_number = <buildNumber>",
+  "focusLogType": "sast_scanning",
+  "anomaliesToDetect": [
+    "security regressions",
+    "secrets leakage",
+    "new vulnerabilities",
+    "build instability",
+    "agent crashes",
+    "dependency issues",
+    "anomalous patterns"
+  ],
+  "riskScoreRules": {
+    "Critical": 30,
+    "High": 20,
+    "Medium": 10,
+    "Warning": 5
+  },
+  "outputRules": {
+    "format": "JSON",
+    "pureJSON": true,
+    "noMarkdown": true,
+    "noExtraText": true,
+    "validation": "Return valid JSON matching the exact format below, with no additional text, comments, or formatting. Use empty arrays ([]) for anomalies or processedLogs if none are detected. Ensure all timestamps are ISO-8601.You MUST return the full JSON structure with **every required top-level field** present, even if values must be estimated or defaulted.\n- The following top-level fields are **MANDATORY** and must NEVER be missing:\n  - jobName\n  - buildId\n  - buildMetadata\n  - summary\n  - riskScore\n  - anomalies\n  - processedLogs\n  - regressionFromPreviousBuilds\n  - insights\n- Sub-fields (e.g. buildMetadata.startTime, riskScore.score, etc.) MUST also be present and correctly populated.\n- Fields MUST NOT be left out, set to null, or empty.\n- If a value is unknown or unparseable, estimate conservatively or use a safe fallback (e.g. durationSeconds = 1).\n- The output MUST always conform exactly to the specified JSON schema. No fields should be skipped or added.\n"
+  },
+  "returnFormat": {
+    "jobName": "<conversationId>",
+    "buildId": <buildNumber>,
+    "buildMetadata": {
+      "startTime": "2025-05-24T13:00:00Z",
+      "durationSeconds": 0,
+      "status": "SUCCESS"
+    },
+    "summary": "Brief summary of detected anomalies or confirmation of no issues",
+    "riskScore": {
+      "score": 0,
+      "previousScore": 0,
+      "change": 0,
+      "riskLevel": "LOW"
+    },
+    "anomalies": [
+      {
+        "type": "sast_scanning",
+        "severity": "CRITICAL",
+        "description": "Example issue summary",
+        "details": {
+          "location": "src/main.java (Lines 10-12) (Columns 5-20)",
+          "issue_id": "SAST-001",
+          "code_snippet": "example code"
+        },
+        "aiAnalysis": "Example AI analysis",
+        "recommendation": "Example actionable mitigation"
+      }
+    ],
+    "processedLogs": [
+      {
+        "type": "sast_scanning",
+        "timestamp": "2025-05-24T13:00:00Z"
+      }
+    ],
+    "regressionFromPreviousBuilds": false,
+    "insights": {
+      "securityTrends": "Example trend analysis over last 5 builds",
+      "criticalIssues": "Example critical issues like secret exposure",
+      "dependencyManagement": "Example dependency issues",
+      "recommendations": "Example actionable recommendations"
+    }
+  }
+}

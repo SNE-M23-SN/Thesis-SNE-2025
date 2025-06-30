@@ -1,0 +1,129 @@
+---
+- name: Ensure hosts are reachable
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Wait for SSH connection
+      wait_for_connection:
+        timeout: 300
+        connect_timeout: 60
+
+- name: Setup Kubernetes Cluster
+  hosts: master, liftoffstage, firststage, secondstage, thirdstage
+  become: yes
+  roles:
+    - common
+    - containerd
+    - buildkit
+    - kubernetes
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    docker_username: "{{ vault_docker_username }}"
+    docker_password: "{{ vault_docker_password }}"
+
+- name: Setup Kubernetes Cluster (MASTER)
+  hosts: master
+  become: yes
+  roles:
+    - master
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    master_hostname: "{{ vault_master_hostname }}"
+
+- name: Setup Kubernetes Cluster (LiftOffStage)
+  hosts: liftoffstage
+  become: yes
+  roles:
+    - worker
+    - liftoffstage
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    worker_hostname: "{{ vault_liftoffstage_hostname }}"
+    ns_liftoffstage: "{{ vault_liftoffstage_namespace | default('liftoffstage') }}"
+    liftoffstage_target_node: "{{ vault_liftoffstage_target_node | default('liftoffstage') }}"
+    postgres_ci_image_repo: "{{ vault_docker_repo }}"
+
+
+- name: Setup Kubernetes Cluster (FirstStage-Preparation)
+  hosts: firststage
+  become: yes
+  roles:
+    - worker
+    - firststage-prep
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    worker_hostname: "{{ vault_firststage_hostname }}"
+    sast_target_node: "{{ vault_sast_target_node | default('sast') }}"
+    firststage_target_node: "{{ vault_firststage_target_node }}"
+
+
+- name: Setup Kubernetes Cluster (SAST)
+  hosts: sast
+  become: yes
+  roles:
+    - common
+    - sast
+   # - kubernetes
+   # - worker
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    worker_hostname: "{{ vault_sast_hostname }}"
+#    ns_sast: "{{ vault_sast_namespace | default('sast') }}"
+    sast_target_node: "{{ vault_sast_target_node | default('sast') }}"
+    docker_daemon_port: "{{ vault_docker_daemon_port | default(2376) }}"
+
+
+- name: Setup Kubernetes Cluster (FirstStage)
+  hosts: firststage
+  become: yes
+  roles:
+    - firststage
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    worker_hostname: "{{ vault_firststage_hostname }}"
+    ns_firststage: "{{ vault_firststage_namespace | default('firststage') }}"
+    sast_target_node: "{{ vault_sast_target_node | default('sast') }}"
+    firststage_image_repo: "{{ vault_docker_repo }}"
+    firststage_target_node: "{{ vault_firststage_target_node }}"
+
+
+- name: Setup Kubernetes Cluster (SecondStage)
+  hosts: secondstage
+  become: yes
+  roles:
+    - worker
+    - secondstage
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    worker_hostname: "{{ vault_secondstage_hostname }}"
+    ns_secondstage: "{{ vault_secondstage_namespace | default('secondstage') }}"
+    diploma_ai_api_key: "{{ vault_google_gemini_api_key }}"
+    vpn_config_file: "{{ vault_vpn_config_file | default('Canada, Quebec S2.ovpn') }}"
+    secondstage_target_node: "{{ vault_secondstage_target_node | default('secondstage') }}"
+    secondstage_image_repo: "{{ vault_docker_repo }}"
+
+- name: Setup Kubernetes Cluster (ThirdStage)
+  hosts: thirdstage
+  become: yes
+  roles:
+    - worker
+    - thirdstage
+  vars_files:
+    - "{{ inventory_dir }}/vault/secrets.yml"
+  vars:
+    worker_hostname: "{{ vault_thirdstage_hostname }}"
+    ns_thirdstage: "{{ vault_thirdstage_namespace | default('thirdstage') }}"
+    api_base_url: "{{ vault_thirdstage_api_url }}"
+    thirdstage_target_node: "{{ vault_thirdstage_target_node | default('thirdstage') }}"
+    secondstage_target_node: "{{ vault_secondstage_target_node | default('secondstage') }}"
+    app_title: "{{ vault_app_title | default('DevSecOps AI Dashboard') }}"
+    node_env: "{{ vault_node_env | default('production') }}"
+    thirdstage_image_repo: "{{ vault_docker_repo }}"
+

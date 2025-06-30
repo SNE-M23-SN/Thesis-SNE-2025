@@ -1,0 +1,439 @@
+---
+# ===== System Preparation =====
+- name: Check for running apt or unattended-upgrade processes
+  shell: ps aux | grep -E "apt|unattended-upgrade" | grep -v grep
+  register: running_processes
+  ignore_errors: true
+
+- name: Kill any running apt or unattended-upgrade processes (if found)
+  ansible.builtin.shell: "kill -9 $(ps aux | grep -E 'apt|unattended-upgrade' | awk '{print $2}')"
+  when: running_processes.stdout != ""
+  ignore_errors: true
+
+- name: Ensure apt lock files are removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/dpkg/lock
+    - /var/cache/apt/archives/lock
+    - /var/lib/apt/lists/lock
+
+- name: Run dpkg reconfigure if necessary
+  ansible.builtin.command: dpkg --configure -a
+  when: running_processes.stdout != ""
+  register: dpkg_configure
+  changed_when: dpkg_configure.rc == 0
+
+- name: Install python3-pip and required packages
+  apt:
+    name:
+      - python3-pip
+      - curl
+      - wget
+      - gnupg
+      - software-properties-common
+    state: present
+    update_cache: yes
+
+- name: Install pre-requisites
+  pip:
+    name:
+      - openshift
+      - pyyaml
+      - kubernetes
+
+# ===== Create Namespace =====
+- name: Create ThirdStage Namespace
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ns_thirdstage }}"
+        labels:
+          name: "{{ ns_thirdstage }}"
+          app: thirdstage
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Read Docker config from target machine
+  slurp:
+    src: /root/.docker/config.json
+  register: docker_config
+
+
+- name: Create image pull secret for private registry
+  community.kubernetes.k8s:
+    state: present
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: regcred
+        namespace: "{{ ns_thirdstage }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ docker_config.content }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+# ===== Copy ThirdStage files to target node =====
+- name: Create ThirdStage application directory on target node
+  file:
+    path: "{{ thirdstage_app_path }}"
+    state: directory
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+
+
+- name: Copy ThirdStage ZIP to target node
+  ansible.builtin.copy:
+    src: "ThirdStage.zip"
+    dest: "/tmp/thirdstage.zip"
+    mode: '0644'
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Extract ThirdStage application
+  ansible.builtin.unarchive:
+    src: "/tmp/thirdstage.zip"
+    dest: "/opt/thirdstage/app-files/"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Clean up ZIP file
+  ansible.builtin.file:
+    path: "/tmp/thirdstage.zip"
+    state: absent
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Verify copied files structure
+  stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ thirdstage_build_context }}/Dockerfile"
+    - "{{ thirdstage_build_context }}/package.json"
+    - "{{ thirdstage_build_context }}/src"
+    - "{{ thirdstage_build_context }}/public"
+  register: file_check
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Display file verification results
+  debug:
+    msg: "File {{ item.item }} exists: {{ item.stat.exists }}"
+  loop: "{{ file_check.results }}"
+  when: not item.stat.exists
+  failed_when: not item.stat.exists
+
+# ===== Install Node.js on target node =====
+- name: Add NodeSource GPG key
+  apt_key:
+    url: https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+    state: present
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Add NodeSource repository
+  apt_repository:
+    repo: "deb https://deb.nodesource.com/node_20.x {{ ansible_distribution_release }} main"
+    state: present
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Install Node.js 20
+  apt:
+    name: nodejs
+    state: present
+    update_cache: yes
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Verify Node.js installation
+  command: node --version
+  register: node_version
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+- name: Display Node.js version
+  debug:
+    msg: "Node.js version installed: {{ node_version.stdout }}"
+
+# ===== Build ThirdStage Docker Image =====
+
+- name: Build ThirdStage Docker image
+  ansible.builtin.shell: |
+    "{{ buildkit_install_dir }}/buildctl-daemonless.sh" build \
+      --frontend dockerfile.v0 \
+      --local context="{{ thirdstage_build_context }}" \
+      --local dockerfile="{{ thirdstage_build_context }}" \
+      --output type=image,name="{{ thirdstage_image_repo }}:{{ thirdstage_image_name | default('thirdstage') }}-{{ thirdstage_image_tag | default('app') }}",push=true
+  register: thirdstage_build
+  delegate_to: "{{ thirdstage_target_node | default('worker') }}"
+
+
+
+- name: Check build command succeeded
+  assert:
+    that: thirdstage_build.rc == 0
+    fail_msg: "ThirdStage image build failed with return code {{ thirdstage_build.rc }}"
+    success_msg: "ThirdStage image build completed successfully"
+
+- name: Extract image digest from build output
+  set_fact:
+    thirdstage_image_digest: "{{ thirdstage_build.stdout | regex_search('digest: ([a-zA-Z0-9:]+)', '\\1') }}"
+  when: "'digest:' in thirdstage_build.stdout"
+
+- name: Extract and display build summary
+  debug:
+    msg: |
+      ✅ ThirdStage Image Build Summary:
+      - Image: {{ thirdstage_image_repo }}:{{ thirdstage_image_name | default('thirdstage') }}-{{ thirdstage_image_tag | default('app') }}
+      - Build Status: SUCCESS
+      - Build Time: {{ ansible_date_time.iso8601 }}
+      {% if thirdstage_image_digest is defined %}
+      - Digest: {{ thirdstage_image_digest }}
+      {% endif %}
+
+
+
+# ===== Create Kubernetes Resources =====
+- name: Create ConfigMap for ThirdStage environment variables
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_thirdstage }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: thirdstage-config
+      data:
+        # Only functional environment variables (actually used by the dashboard)
+        NODE_ENV: "{{ node_env }}"
+        VITE_API_BASE_URL: "{{ api_base_url }}"
+        # Note: Other VITE_ variables are ignored by the application
+        # Dashboard features are hard-coded in src/constants/dashboard.ts
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Deploy ThirdStage Dashboard Application
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_thirdstage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: thirdstage-dashboard
+        labels:
+          app: thirdstage-dashboard
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: thirdstage-dashboard
+        template:
+          metadata:
+            labels:
+              app: thirdstage-dashboard
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ thirdstage_target_node | default('worker') }}"
+            containers:
+              - name: dashboard-frontend
+                image: "{{ thirdstage_image_repo }}:{{ thirdstage_image_name | default('thirdstage') }}-{{ thirdstage_image_tag | default('app') }}"
+                ports:
+                  - containerPort: 3000
+                    name: http
+                  - containerPort: 24678
+                    name: hmr
+                envFrom:
+                  - configMapRef:
+                      name: thirdstage-config
+                resources:
+                  requests:
+                    cpu: "{{ cpu_request }}"
+                    memory: "{{ memory_request }}"
+                  limits:
+                    cpu: "{{ cpu_limit }}"
+                    memory: "{{ memory_limit }}"
+                livenessProbe:
+                  httpGet:
+                    path: /
+                    port: 3000
+                  initialDelaySeconds: "{{ liveness_initial_delay }}"
+                  periodSeconds: "{{ liveness_period }}"
+                  timeoutSeconds: 10
+                  failureThreshold: 3
+                readinessProbe:
+                  httpGet:
+                    path: /
+                    port: 3000
+                  initialDelaySeconds: "{{ readiness_initial_delay }}"
+                  periodSeconds: "{{ readiness_period }}"
+                  timeoutSeconds: 5
+                  failureThreshold: 3
+            imagePullSecrets:
+              - name: regcred
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create ThirdStage Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_thirdstage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: thirdstage-service
+        labels:
+          app: thirdstage-dashboard
+      spec:
+        type: NodePort
+        ports:
+          - port: 3000
+            targetPort: 3000
+            protocol: TCP
+            name: http
+            nodePort: 32018
+          - port: 24678
+            targetPort: 24678
+            protocol: TCP
+            name: hmr
+        selector:
+          app: thirdstage-dashboard
+  delegate_to: "{{ groups['master'][0] }}"
+
+# ===== Wait for Application to be Ready =====
+- name: Wait for ThirdStage deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: thirdstage-dashboard
+    namespace: "{{ ns_thirdstage }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Wait for ThirdStage application to be accessible
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[thirdstage_target_node | default('worker')].ansible_host }}"
+    port: "{{ nodeport }}"
+    state: started
+    delay: 30
+    timeout: 300
+  become: false
+  delegate_to: localhost
+
+# ===== Health Check =====
+- name: Check ThirdStage dashboard accessibility
+  uri:
+    url: "http://{{ hostvars[thirdstage_target_node | default('worker')].ansible_host }}:{{ nodeport }}"
+    method: GET
+    status_code: 200
+    timeout: 10
+  register: dashboard_check
+  ignore_errors: true
+  delegate_to: localhost
+  become: false
+
+# ===== Display Deployment Summary =====
+- name: Display ThirdStage deployment information
+  debug:
+    msg: |
+      🎉 ThirdStage Deployment Complete!
+
+      📱 Dashboard Application Deployed:
+
+      🖥️ DevSecOps AI Dashboard:
+         - External URL: http://{{ hostvars[thirdstage_target_node | default('worker')].ansible_host }}:{{ nodeport }}
+         - Internal URL: thirdstage-service.{{ ns_thirdstage }}.svc.cluster.local:3000
+         - Status: {{ 'Ready ✅' if dashboard_check.status == 200 else 'Check manually ⚠️' }}
+         - Features: Real-time monitoring, AI insights, build analytics, security dashboard
+
+      🔗 Backend API Connectivity:
+         - API Backend: {{ api_base_url }}
+         - SecondStage Integration: {{ 'Connected ✅' if 'secondstage' in api_base_url else 'External API ⚠️' }}
+         - Data Sources: Jenkins builds, anomaly detection, security scans
+
+      📦 Deployment Details:
+         - Namespace: {{ ns_thirdstage }}
+         - Target Node: {{ thirdstage_target_node | default('worker') }}
+         - Dashboard Port: 3000 (NodePort: {{ nodeport }})
+         - HMR Port: 24678 (Development)
+         - Environment: {{ node_env }}
+
+      🎯 Dashboard Features:
+         - Real-time build monitoring with 30-second auto-refresh
+         - AI-powered security anomaly detection and insights
+         - Interactive charts and trend analysis
+         - Build log analysis and risk scoring
+         - Dark/Light theme support
+         - Mobile-responsive design
+
+      🎯 Next Steps:
+         1. Access dashboard at: http://{{ hostvars[thirdstage_target_node | default('worker')].ansible_host }}:{{ nodeport }}
+         2. Verify SecondStage API connectivity for data
+         3. Monitor Jenkins builds and security insights
+         4. Configure alerts and notifications as needed
+
+- name: Create deployment summary ConfigMap
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_thirdstage }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: thirdstage-deployment-info
+        labels:
+          app: thirdstage
+          component: info
+      data:
+        deployment-summary.txt: |
+          ThirdStage Deployment Summary
+          ============================
+
+          Dashboard Application:
+          - External URL: http://{{ hostvars[thirdstage_target_node | default('worker')].ansible_host }}:{{ nodeport }}
+          - Internal URL: thirdstage-service.{{ ns_thirdstage }}.svc.cluster.local:3000
+          - Purpose: DevSecOps AI Dashboard for real-time monitoring and security insights
+
+          Backend Integration:
+          - API Backend: {{ api_base_url }}
+          - Data Sources: Jenkins builds, anomaly detection, security scans
+          - Features: Real-time monitoring, AI insights, build analytics
+
+          Deployment Details:
+          - Namespace: {{ ns_thirdstage }}
+          - Target Node: {{ thirdstage_target_node | default('worker') }}
+          - Environment: {{ node_env }}
+          - Deployed: {{ ansible_date_time.iso8601 }}
+
+          Dashboard Features:
+          - Real-time build monitoring (30-second auto-refresh)
+          - AI-powered security anomaly detection
+          - Interactive charts and trend analysis
+          - Build log analysis and risk scoring
+          - Dark/Light theme support
+          - Mobile-responsive design
+
+          Access Information:
+          - Dashboard Port: 3000 (NodePort: {{ nodeport }})
+          - HMR Port: 24678 (Development only)
+          - Health Check: http://{{ hostvars[thirdstage_target_node | default('worker')].ansible_host }}:{{ nodeport }}
+  delegate_to: "{{ groups['master'][0] }}"

@@ -1,0 +1,186 @@
+---
+- name: Configure kernel modules for containerd
+  template:
+    src: containerd.conf.j2
+    dest: /etc/modules-load.d/containerd.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Load kernel modules
+
+- name: Load required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+  tags:
+    - security
+    - kernel
+
+- name: Configure kernel parameters for Kubernetes
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysfs_file: "{{ item.file | default(omit) }}"
+    reload: yes
+  loop:
+    - {key: 'net.bridge.bridge-nf-call-ip6tables', value: '1'}
+    - {key: 'net.bridge.bridge-nf-call-iptables', value: '1'}
+    - {key: 'net.ipv4.ip_forward', value: '1'}
+  tags:
+    - security
+    - kernel
+
+- name: Install containerd dependencies
+  apt:
+    name: "{{ containerd_deps }}"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+  vars:
+    containerd_deps:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+      - socat  # Required for Kubernetes port forwarding
+  when: ansible_os_family == "Debian"
+
+- name: Add Docker official GPG key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+    id: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+  when: ansible_os_family == "Debian"
+
+- name: Add Docker repository
+  apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+
+
+- name: Check for active package managers
+  shell: |
+    if pgrep -x apt > /dev/null; then
+      echo "apt_running"
+    elif pgrep -x dpkg > /dev/null; then
+      echo "dpkg_running"
+    elif pgrep -x unattended-upgrades > /dev/null; then
+      echo "unattended_upgrades_running"
+    else
+      echo "none"
+    fi
+  register: package_manager_status
+  changed_when: false
+
+- name: Wait for package managers to finish
+  wait_for:
+    path: "/var/lib/dpkg/lock-frontend"
+    state: absent
+    timeout: 30
+  when: package_manager_status.stdout != "none"
+
+- name: Force kill stuck package managers (emergency)
+  shell: |
+    pkill -f apt
+    pkill -f dpkg
+    pkill -f unattended-upgrades
+  when: 
+    - package_manager_status.stdout != "none"
+    - ansible_check_mode == false
+  ignore_errors: yes
+
+
+- name: Install containerd.io
+  apt:
+    name: containerd.io
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Create containerd config directory
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Generate default containerd config
+  shell: containerd config default
+  register: default_containerd_config
+  changed_when: false
+
+- name: Create containerd config with proper CRI settings
+  copy:
+    content: |
+      {{ default_containerd_config.stdout |
+         regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') |
+         regex_replace('disabled_plugins = \[.*\]', 'disabled_plugins = []') |
+         regex_replace('sandbox_image = ".*"', 'sandbox_image = "registry.k8s.io/pause:3.9"') }}
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart containerd
+
+- name: Enable and start containerd service
+  systemd:
+    name: containerd
+    state: started
+    enabled: yes
+    daemon_reload: yes
+
+- name: Wait for containerd to be ready
+  wait_for:
+    path: /var/run/containerd/containerd.sock
+    timeout: 30
+
+- name: Verify containerd CRI functionality
+  shell: crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock version
+  register: crictl_version
+  failed_when: false
+  changed_when: false
+
+- name: Install crictl if not available
+  shell: |
+    VERSION="v1.29.0"
+    wget https://github.com/kubernetes-sigs/cri-tools/releases/download/$VERSION/crictl-$VERSION-linux-amd64.tar.gz
+    sudo tar zxvf crictl-$VERSION-linux-amd64.tar.gz -C /usr/local/bin
+    rm -f crictl-$VERSION-linux-amd64.tar.gz
+  when: crictl_version.rc != 0
+  args:
+    creates: /usr/local/bin/crictl
+
+- name: Configure crictl to use containerd
+  copy:
+    content: |
+      runtime-endpoint: unix:///var/run/containerd/containerd.sock
+      image-endpoint: unix:///var/run/containerd/containerd.sock
+      timeout: 2
+      debug: false
+      pull-image-on-create: false
+    dest: /etc/crictl.yaml
+    owner: root
+    group: root
+    mode: '0644'
+
+#- name: Setup containerd security audit rules
+#  template:
+#    src: audit-containerd.rules.j2
+#    dest: /etc/audit/rules.d/containerd.rules
+#    mode: '0600'
+#    owner: root
+#    group: root
+#  notify: Reload audit rules
+#  tags:
+#    - security
+#    - audit

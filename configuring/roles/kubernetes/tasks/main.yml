@@ -1,0 +1,139 @@
+---
+- name: Remove swapfile from /etc/fstab
+  mount:
+    name: "{{ item }}"
+    fstype: swap
+    state: absent
+  with_items:
+    - swap
+    - none
+
+- name: Disable swap
+  command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+
+- name: Install dependencies
+  apt:
+    name: [ 'apt-transport-https','ca-certificates','curl','gnupg-agent','software-properties-common' ]
+    state: present
+    update_cache: yes
+    install_recommends: no  # Only install required packages
+
+- name: Create keyrings directory with secure permissions
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Download Kubernetes signing key
+  get_url:
+    url: https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key
+    dest: /tmp/k8s-archive-keyring.asc
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Import Kubernetes signing key
+  shell: |
+    gpg --dearmor < /tmp/k8s-archive-keyring.asc > /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    rm /tmp/k8s-archive-keyring.asc
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes repository to sources.list.d with secure permissions
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /'
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Update the system
+  package:
+    update_cache: yes
+
+- name: Check for running apt/dpkg processes
+  shell: pgrep -f "apt|dpkg|unattended-upgrade" | wc -l
+  register: apt_processes
+  changed_when: false
+
+- name: Wait for apt/dpkg processes to complete (with shorter timeout)
+  shell: |
+    timeout=60  # 1 minute timeout (not 5!)
+    counter=0
+    while [ $counter -lt $timeout ]; do
+      if ! pgrep -f "apt|dpkg|unattended-upgrade" > /dev/null; then
+        echo "No processes running"
+        exit 0
+      fi
+      echo "Waiting for apt/dpkg processes... ($counter/$timeout)"
+      sleep 2
+      counter=$((counter + 2))
+    done
+    echo "Timeout reached"
+    exit 1
+  when: apt_processes.stdout|int > 0
+  register: process_wait
+  failed_when: false
+
+- name: Remove stale locks if processes timed out
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/apt/lists/lock
+    - /var/cache/apt/archives/lock
+  when: 
+    - process_wait is defined
+    - process_wait.rc != 0
+  ignore_errors: yes
+
+- name: Check if dpkg needs reconfiguration
+  shell: dpkg --audit | wc -l
+  register: dpkg_broken
+  changed_when: false
+
+- name: Run dpkg reconfigure if necessary
+  command: dpkg --configure -a
+  when: dpkg_broken.stdout|int > 0
+  register: dpkg_configure
+  changed_when: dpkg_configure.rc == 0
+
+- name: Install specific versions of Kubernetes packages
+  apt:
+    name: 
+      - kubelet=1.31.1-1.1
+      - kubeadm=1.31.1-1.1
+      - kubectl=1.31.1-1.1
+    state: present
+    update_cache: yes
+    allow_downgrade: yes  # In case we need to enforce specific versions
+
+- name: Hold kubelet package at current version
+  ansible.builtin.dpkg_selections:
+    name: 'kubelet'
+    selection: hold
+
+- name: Hold kubeadm package at current version
+  ansible.builtin.dpkg_selections:
+    name: 'kubeadm'
+    selection: hold
+
+- name: Hold kubectl package at current version
+  ansible.builtin.dpkg_selections:
+    name: 'kubectl'
+    selection: hold
+
+
+- name: Start and enable Kubelet
+  systemd:
+    name: kubelet
+    enabled: yes
+    state: started
+    daemon_reload: yes
+

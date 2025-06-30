@@ -1,0 +1,92 @@
+---
+# SecondStage Role Default Variables
+
+# Installation directories
+buildkit_install_dir: "/usr/local/bin"
+
+# ===== Namespace Configuration =====
+ns_secondstage: "secondstage"
+
+# ===== Target Node Configuration =====
+secondstage_target_node: "worker"
+
+secondstage_image_repo: "docker.io/khasanabdurakhmanov/innopolis"
+
+# ===== Application Configuration =====
+# API Application (Jenkins Monitoring) - Port 8383
+api_app_port: 8383
+api_nodeport: 32016
+secondstage_api_image_name: "secondstage"
+secondstage_api_image_tag: "api"
+
+# Diploma Application (AI Anomaly Detection) - Port 8282
+diploma_app_port: 8282
+diploma_nodeport: 32017
+secondstage_app_image_name: "secondstage"
+secondstage_app_image_tag: "app"
+
+# ===== API Application Configuration =====
+# Jenkins Integration
+jenkins_url: "http://jenkins-liftoff.liftoffstage.svc.cluster.local:8080"
+api_jenkins_username: "admin"
+api_jenkins_password: "admin123"
+
+# Database Configuration for API
+api_database_url: "jdbc:postgresql://postgres-ci.liftoffstage.svc.cluster.local:5432/postgres"
+api_database_username: "postgres"
+api_database_password: "postgres"
+
+# API Application Settings
+api_cors_origins: "*"
+api_log_level: "DEBUG"
+
+# API Resource Limits
+api_memory_request: "2Gi"
+api_cpu_request: "1000m"
+api_memory_limit: "4Gi"
+api_cpu_limit: "3000m"
+
+# ===== Diploma Application Configuration =====
+# AI Configuration
+diploma_ai_api_key: ""  # REQUIRED: Must be provided via vault or override
+ai_model: "gemini-2.5-pro"
+ai_temperature: "0.3"
+ai_response_format: "JSON_OBJECT"
+ai_base_url: "https://generativelanguage.googleapis.com"
+
+# Database Configuration for Diploma
+diploma_database_url: "jdbc:postgresql://postgres-ci.liftoffstage.svc.cluster.local:5432/postgres"
+diploma_database_username: "postgres"
+diploma_database_password: "postgres"
+
+# RabbitMQ Configuration
+rabbitmq_host: "rabbitmq.liftoffstage.svc.cluster.local"
+rabbitmq_port: "5672"
+diploma_rabbitmq_username: "liftoffstage"
+diploma_rabbitmq_password: "liftoffstage123"
+
+# Queue Configuration
+queue_name: "Jenkins"
+queue_dlq_name: "Jenkins.dlq"
+queue_ttl: "150000"
+
+# Diploma Application Settings
+diploma_log_level: "DEBUG"
+
+# Diploma Resource Limits
+diploma_memory_request: "4Gi"
+diploma_cpu_request: "2000m"
+diploma_memory_limit: "6Gi"
+diploma_cpu_limit: "4000m"
+
+# ===== VPN Configuration =====
+vpn_namespace: "vpnspace"
+vpn_config_file: "Canada, Quebec S2.ovpn"  # Default VPN server
+domain_to_route: "generativelanguage.googleapis.com"  # Google Gemini API domain
+
+# ===== External Service Integration =====
+# LiftOffStage Service References
+postgres_ci_nodeport: 30432
+rabbitmq_amqp_nodeport: 32011
+rabbitmq_management_nodeport: 32012
+jenkins_liftoff_web_nodeport: 32013

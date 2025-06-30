@@ -1,0 +1,33 @@
+---
+# SAST Role Handlers
+
+- name: restart docker
+  systemd:
+    name: docker
+    state: restarted
+    daemon_reload: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: reload systemd daemon
+  systemd:
+    daemon_reload: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: reload docker daemon
+  systemd:
+    name: docker
+    state: reloaded
+    daemon_reload: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: stop docker
+  systemd:
+    name: docker
+    state: stopped
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: start docker
+  systemd:
+    name: docker
+    state: started
+  delegate_to: "{{ sast_target_node | default('worker') }}"

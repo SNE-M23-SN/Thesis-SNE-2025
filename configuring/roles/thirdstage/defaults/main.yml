@@ -1,0 +1,44 @@
+---
+# ThirdStage Dashboard Frontend Configuration
+ns_thirdstage: "thirdstage"
+
+# Installation directories
+buildkit_install_dir: "/usr/local/bin"
+
+# Frontend Application Configuration (Production)
+node_env: "production"
+
+
+secondstage_target_node: "secondstage"
+# API Configuration - connects to SecondStage
+# Default points to SecondStage API service in Kubernetes
+api_base_url: "http://{{ hostvars[secondstage_target_node | default ('worker')].ansible_host }}:32016/api/dashboard"
+# For external access, use NodePort or LoadBalancer IP
+# api_base_url: "http://{{ hostvars['worker'].ansible_host }}:32016/api/dashboard"
+
+# Production Configuration
+# Note: Most dashboard features are hard-coded and not configurable via environment variables
+# Only VITE_API_BASE_URL and NODE_ENV are actually used by the application
+
+# Docker Image Configuration
+thirdstage_image_name: "thirdstage"
+thirdstage_image_tag: "app"
+thirdstage_image_repo: "docker.io/khasanabdurakhmanov/innopolis"
+
+# Target Node Configuration
+thirdstage_target_node: "worker"
+
+# Service Configuration (NodePort only)
+nodeport: 32018  # External access port
+
+# Resource Configuration
+cpu_request: "200m"
+cpu_limit: "512m"
+memory_request: "512Mi"
+memory_limit: "1Gi"
+
+# Health Check Configuration
+readiness_initial_delay: 30
+readiness_period: 10
+liveness_initial_delay: 60
+liveness_period: 30

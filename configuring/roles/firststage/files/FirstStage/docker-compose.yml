@@ -1,0 +1,78 @@
+# Specifies the version of the Docker Compose file format.
+# Version 3.8 is compatible with Docker Engine 19.03.0+ and supports a wide range of features.
+version: '3.8'
+
+# Defines the services (containers) that make up the application.
+services:
+  # Service name: 'app' - This is your main application container.
+  app:
+    # Specifies the image name and tag for the container. 
+    # 'rabbitmq-app:latest' will be built locally if not found in the registry.
+    image: rabbitmq-app:latest
+
+    # Configuration for building the Docker image for this service.
+    build:
+      # The build context is the current directory ('.'), where the Dockerfile is located.
+      context: .
+      # The file used to build the image. Assumes a 'Dockerfile' exists in the context directory.
+      dockerfile: Dockerfile
+
+    environment:
+      - RABBITMQ_HOSTNAME=${RABBITMQ_HOSTNAME}
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - SPRING_DATASOURCE_URL=${SPRING_DATASOURCE_URL}
+      - SPRING_DATASOURCE_USERNAME=${SPRING_DATASOURCE_USERNAME}
+      - SPRING_DATASOURCE_PASSWORD=${SPRING_DATASOURCE_PASSWORD}
+      - JENKINS_URL=${JENKINS_URL}
+      - JENKINS_USERNAME=${JENKINS_USERNAME}
+      - JENKINS_PASSWORD=${JENKINS_PASSWORD}
+      - DOCKER_HOST=${DOCKER_HOST}
+
+    # Specifies dependencies: 'app' won't start until these services are healthy.
+    depends_on:
+      - postgres      # Ensures PostgreSQL is running before 'app' starts.
+
+
+    networks:
+      - app-network
+
+
+
+  # Service name: 'postgres' - This is the PostgreSQL database container.
+  postgres:
+    # Uses the latest official PostgreSQL image from Docker Hub.
+    image: postgres:latest
+
+    # Maps the PostgreSQL port from the container to the host.
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+
+    # Persists PostgreSQL data using a named volume.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # Maps the volume 'postgres-data' to PostgreSQL's data directory.
+
+    # Connects the 'postgres' service to the custom network.
+    networks:
+      - app-network
+
+ 
+
+# Defines the network configuration for service communication.
+networks:
+  # Network name: 'app-network' - A custom bridge network for local services.
+  app-network:
+    # Uses the bridge driver, allowing containers to communicate via service names.
+    driver: bridge
+
+
+# Defines named volumes for persistent data storage.
+volumes:
+  # Volume name: 'postgres-data' - Stores PostgreSQL data between container restarts.
+  postgres-data:
+

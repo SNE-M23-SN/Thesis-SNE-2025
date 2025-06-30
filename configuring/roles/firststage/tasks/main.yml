@@ -1,0 +1,358 @@
+---
+- name: Check for running apt or unattended-upgrade processes
+  shell: ps aux | grep -E "apt|unattended-upgrade" | grep -v grep
+  register: running_processes
+  ignore_errors: true
+
+- name: Kill any running apt or unattended-upgrade processes (if found)
+  ansible.builtin.shell: "kill -9 $(ps aux | grep -E 'apt|unattended-upgrade' | awk '{print $2}')"
+  when: running_processes.stdout != ""
+  ignore_errors: true
+
+- name: Ensure apt lock files are removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/dpkg/lock
+    - /var/cache/apt/archives/lock
+    - /var/lib/apt/lists/lock
+
+
+- name: Run dpkg reconfigure if necessary
+  ansible.builtin.command: dpkg --configure -a
+  when: running_processes.stdout != ""
+  register: dpkg_configure
+  changed_when: dpkg_configure.rc == 0
+
+
+- name: Install python3-pip
+  apt:
+    name: python3-pip
+    state: present
+  delegate_to: "{{ groups['master'][0] }}"  
+
+
+- name: install pre-requisites
+  pip:
+    name:
+      - openshift
+      - pyyaml
+      - kubernetes
+  delegate_to: "{{ groups['master'][0] }}"    
+
+- name: Create namespace for FirstStage application
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ns_firststage }}"
+      labels:
+          name: "{{ ns_firststage }}"
+          app: firststage
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Read Docker config from target machine
+  slurp:
+    src: /root/.docker/config.json
+  register: docker_config
+
+
+- name: Create image pull secret for private registry
+  community.kubernetes.k8s:
+    state: present
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: regcred
+        namespace: "{{ ns_firststage }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ docker_config.content }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+# ===== Build FirstStage Docker Image =====
+
+- name: Build FirstStage Docker image
+  ansible.builtin.shell: |
+    "{{ buildkit_install_dir }}/buildctl-daemonless.sh" build \
+      --frontend dockerfile.v0 \
+      --local context=/opt/firststage/app-files/ \
+      --local dockerfile=/opt/firststage/app-files/ \
+      --output type=image,name="{{ firststage_image_repo }}:{{ firststage_image_name | default('firststage') }}-{{ firststage_image_tag | default('latest') }}",push=true
+  register: firststage_build
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+
+
+
+- name: Check build command succeeded
+  assert:
+    that: firststage_build.rc == 0
+    fail_msg: "FirstStage image build failed with return code {{ firststage_build.rc }}"
+    success_msg: "FirstStage image build completed successfully"
+
+- name: Extract image digest from build output
+  set_fact:
+    firststage_image_digest: "{{ firststage_build.stdout | regex_search('digest: ([a-zA-Z0-9:]+)', '\\1') }}"
+  when: "'digest:' in firststage_build.stdout"
+
+- name: Extract and display build summary
+  debug:
+    msg: |
+      ✅ FirstStage Image Build Summary:
+      - Image: {{ firststage_image_repo }}:{{ firststage_image_name | default('firststage') }}-{{ firststage_image_tag | default('latest') }}
+      - Build Status: SUCCESS
+      - Build Time: {{ ansible_date_time.iso8601 }}
+      {% if firststage_image_digest is defined %}
+      - Digest: {{ firststage_image_digest }}
+      {% endif %}
+
+
+
+- name: Create ConfigMap for FirstStage environment variables
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: firststage-config
+      data:
+        RABBITMQ_HOSTNAME: "{{ rabbitmq_hostname }}"
+        RABBITMQ_PORT: "{{ rabbitmq_port }}"
+        JENKINS_URL: "{{ jenkins_url }}"
+        SPRING_DATASOURCE_URL: "jdbc:postgresql://firststage-postgres:5432/postgres"
+        SPRING_DATASOURCE_USERNAME: "postgres"
+        DOCKER_HOST: "{{ docker_host }}"
+  delegate_to: "{{ groups['master'][0] }}"      
+
+
+- name: Create Secret for FirstStage sensitive data
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: firststage-secrets
+      type: Opaque
+      data:
+        RABBITMQ_USERNAME: "{{ rabbitmq_username | b64encode }}"
+        RABBITMQ_PASSWORD: "{{ rabbitmq_password | b64encode }}"
+        JENKINS_USERNAME: "{{ jenkins_username | b64encode }}"
+        JENKINS_PASSWORD: "{{ jenkins_password | b64encode }}"
+        SPRING_DATASOURCE_PASSWORD: "{{ postgres_password | b64encode }}"
+        POSTGRES_USER: "{{ postgres_user | b64encode }}"
+        POSTGRES_PASSWORD: "{{ postgres_password | b64encode }}"
+        POSTGRES_DB: "{{ postgres_db | b64encode }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create PersistentVolume for PostgreSQL data
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: firststage-postgres-pv
+      spec:
+        storageClassName: local-storage
+        capacity:
+          storage: 10Gi
+        persistentVolumeReclaimPolicy: Retain
+        accessModes:
+          - ReadWriteOnce
+        hostPath:
+          path: /opt/firststage-postgres
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create PersistentVolumeClaim for PostgreSQL
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: firststage-postgres-pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-storage
+        resources:
+          requests:
+            storage: 5Gi
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Deploy PostgreSQL for FirstStage
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: firststage-postgres
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: firststage-postgres
+        template:
+          metadata:
+            labels:
+              app: firststage-postgres
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ firststage_target_node | default('worker') }}"
+            containers:
+              - name: postgres
+                image: postgres:17.5
+                ports:
+                  - containerPort: 5432
+                env:
+                  - name: POSTGRES_USER
+                    valueFrom:
+                      secretKeyRef:
+                        name: firststage-secrets
+                        key: POSTGRES_USER
+                  - name: POSTGRES_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: firststage-secrets
+                        key: POSTGRES_PASSWORD
+                  - name: POSTGRES_DB
+                    valueFrom:
+                      secretKeyRef:
+                        name: firststage-secrets
+                        key: POSTGRES_DB
+                volumeMounts:
+                  - mountPath: /var/lib/postgresql/data
+                    name: postgres-storage
+            requests:
+              memory: "{{ postgres_memory_request }}"
+              cpu: "{{ postgres_cpu_request }}"
+            limits:
+              memory: "{{ postgres_memory_limit }}"
+              cpu: "{{ postgres_cpu_limit }}"
+            volumes:
+              - name: postgres-storage
+                persistentVolumeClaim:
+                  claimName: firststage-postgres-pvc
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create PostgreSQL Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: firststage-postgres
+      spec:
+        type: ClusterIP
+        ports:
+          - port: 5432
+            targetPort: 5432
+        selector:
+          app: firststage-postgres
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Deploy FirstStage Application
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: firststage-app
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: firststage-app
+        template:
+          metadata:
+            labels:
+              app: firststage-app
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ firststage_target_node | default('worker') }}"
+            containers:
+              - name: firststage
+                image: "{{ firststage_image_repo }}:{{ firststage_image_name | default('firststage') }}-{{ firststage_image_tag | default('latest') }}"
+                ports:
+                  - containerPort: 8080
+                requests:
+                  memory: "{{ firststage_memory_request }}"
+                  cpu: "{{ firststage_cpu_request }}"
+                limits:
+                  memory: "{{ firststage_memory_limit }}"
+                  cpu: "{{ firststage_cpu_limit }}"
+                envFrom:
+                  - configMapRef:
+                      name: firststage-config
+                  - secretRef:
+                      name: firststage-secrets
+            imagePullSecrets:
+              - name: regcred
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create FirstStage Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_firststage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: firststage-service
+      spec:
+        type: NodePort
+        ports:
+          - port: 8080
+            targetPort: 8080
+            nodePort: 32015
+        selector:
+          app: firststage-app
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Wait for FirstStage deployment to be ready
+  ansible.builtin.command:
+    cmd: kubectl --kubeconfig=/home/ubuntu/.kube/config wait --for=condition=available --timeout=300s deployment/firststage-app -n {{ ns_firststage }}
+  register: kubectl_wait_result
+  failed_when: kubectl_wait_result.rc != 0
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Display FirstStage deployment status
+  ansible.builtin.debug:
+    msg: "FirstStage deployment is ready: {{ kubectl_wait_result.stdout }}"
+  when: kubectl_wait_result.rc == 0

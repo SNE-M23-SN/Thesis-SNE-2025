@@ -1,0 +1,857 @@
+---
+- name: Check for running apt or unattended-upgrade processes
+  shell: ps aux | grep -E "apt|unattended-upgrade" | grep -v grep
+  register: running_processes
+  ignore_errors: true
+
+- name: Kill any running apt or unattended-upgrade processes (if found)
+  ansible.builtin.shell: "kill -9 $(ps aux | grep -E 'apt|unattended-upgrade' | awk '{print $2}')"
+  when: running_processes.stdout != ""
+  ignore_errors: true
+
+- name: Ensure apt lock files are removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/dpkg/lock
+    - /var/cache/apt/archives/lock
+    - /var/lib/apt/lists/lock
+
+- name: Run dpkg reconfigure if necessary
+  ansible.builtin.command: dpkg --configure -a
+  when: running_processes.stdout != ""
+  register: dpkg_configure
+  changed_when: dpkg_configure.rc == 0
+
+- name: Install python3-pip
+  apt:
+    name: python3-pip
+    state: present
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: install pre-requisites
+  pip:
+    name:
+      - openshift
+      - pyyaml
+      - kubernetes
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create LiftOffStage Namespace
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ns_liftoffstage }}"
+        labels:
+          name: "{{ ns_liftoffstage }}"
+          app: liftoffstage
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+- name: Read Docker config from target machine
+  slurp:
+    src: /root/.docker/config.json
+  register: docker_config
+
+
+- name: Create image pull secret for private registry
+  community.kubernetes.k8s:
+    state: present
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: regcred
+        namespace: "{{ ns_liftoffstage }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ docker_config.content }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+# ===== Copy LiftOffStage files to target node =====
+- name: Create LiftOffStage application directory on target node
+  file:
+    path: /opt/liftoffstage/app-files
+    state: directory
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+
+
+- name: Copy LiftOffStage ZIP to target node
+  ansible.builtin.copy:
+    src: "LiftOffStage.zip"
+    dest: "/tmp/liftoffstage.zip"
+    mode: '0644'
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+
+- name: Extract LiftOffStage application
+  ansible.builtin.unarchive:
+    src: "/tmp/liftoffstage.zip"
+    dest: "/opt/liftoffstage/app-files/"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+
+- name: Clean up ZIP file
+  ansible.builtin.file:
+    path: "/tmp/liftoffstage.zip"
+    state: absent
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+
+- name: Verify copied files structure
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/liftoffstage/app-files/postgres_ci/init.sql
+    - /opt/liftoffstage/app-files/postgres_ci/Dockerfile
+    - /opt/liftoffstage/app-files/jenkins/init.groovy.d/init.groovy
+    - /opt/liftoffstage/app-files/docker-compose.yml
+  register: file_check
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+
+- name: Display file verification results
+  debug:
+    msg: "File {{ item.item }} exists: {{ item.stat.exists }}"
+  loop: "{{ file_check.results }}"
+  when: not item.stat.exists
+  failed_when: not item.stat.exists
+
+
+
+- name: Build PostgreSQL CI custom image
+  ansible.builtin.shell: |
+    "{{ buildkit_install_dir }}/buildctl-daemonless.sh" build \
+      --frontend dockerfile.v0 \
+      --local context=/opt/liftoffstage/app-files/postgres_ci \
+      --local dockerfile=/opt/liftoffstage/app-files/postgres_ci \
+      --output type=image,name="{{ postgres_ci_image_repo }}:{{ postgres_ci_image_name | default('postgres-ci') }}-{{ postgres_ci_image_tag | default('17.5') }}",push=true
+  register: postgres_build
+  delegate_to: "{{ liftoffstage_target_node }}"
+
+
+
+- name: Check build command succeeded
+  assert:
+    that: postgres_build.rc == 0
+    fail_msg: "PostgreSQL CI image build failed with return code {{ postgres_build.rc }}"
+    success_msg: "PostgreSQL CI image build completed successfully"
+
+- name: Extract image digest from build output
+  set_fact:
+    postgres_image_digest: "{{ postgres_build.stdout | regex_search('digest: ([a-zA-Z0-9:]+)', '\\1') }}"
+  when: "'digest:' in postgres_build.stdout"
+
+- name: Extract and display build summary
+  debug:
+    msg: |
+      ✅ PostgreSQL CI Image Build Summary:
+      - Image: {{ postgres_ci_image_repo }}:{{ postgres_ci_image_tag | default('17.5') }}
+      - Build Status: SUCCESS
+      - Build Time: {{ ansible_date_time.iso8601 }}
+      {% if postgres_image_digest is defined %}
+      - Digest: {{ postgres_image_digest }}
+      {% endif %}
+
+
+# ===== PostgreSQL CI Service =====
+
+- name: Create PostgreSQL CI PersistentVolume
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: postgres-ci-pv
+        labels:
+          app: postgres-ci
+      spec:
+        capacity:
+          storage: "{{ postgres_ci_storage_size | default('10Gi') }}"
+        accessModes:
+          - ReadWriteOnce
+        persistentVolumeReclaimPolicy: Retain
+        storageClassName: local-storage
+        hostPath:
+          path: "{{ postgres_ci_host_path | default('/opt/liftoffstage/postgres-ci') }}"
+          type: DirectoryOrCreate
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create PostgreSQL CI PersistentVolumeClaim
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: postgres-ci-pvc
+        labels:
+          app: postgres-ci
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-storage
+        resources:
+          requests:
+            storage: "{{ postgres_ci_storage_size | default('10Gi') }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create PostgreSQL CI Deployment
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: postgres-ci
+        labels:
+          app: postgres-ci
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: postgres-ci
+        template:
+          metadata:
+            labels:
+              app: postgres-ci
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ liftoffstage_target_node | default('worker') }}"
+            containers:
+            - name: postgres-ci
+              # Use your custom built image instead of postgres:17.5
+              image: "{{ postgres_ci_image_repo }}:{{ postgres_ci_image_name | default('postgres-ci') }}-{{ postgres_ci_image_tag | default('17.5') }}"
+              ports:
+              - name: postgres
+                containerPort: 5432
+                protocol: TCP
+              env:
+              - name: POSTGRES_DB
+                value: "{{ postgres_ci_db | default('liftoffstage') }}"
+              - name: POSTGRES_USER
+                value: "{{ postgres_ci_user | default('liftoffstage') }}"
+              - name: POSTGRES_PASSWORD
+                value: "{{ postgres_ci_password | default('liftoffstage123') }}"
+              # Remove POSTGRES_INITDB_ARGS since your Dockerfile should handle pg_cron configuration
+              resources:
+                requests:
+                  memory: "{{ postgres_ci_memory_request | default('512Mi') }}"
+                  cpu: "{{ postgres_ci_cpu_request | default('250m') }}"
+                limits:
+                  memory: "{{ postgres_ci_memory_limit | default('1Gi') }}"
+                  cpu: "{{ postgres_ci_cpu_limit | default('500m') }}"
+              livenessProbe:
+                exec:
+                  command:
+                    - pg_isready
+                    - -U
+                    - "{{ postgres_ci_user | default('liftoffstage') }}"
+                    - -d
+                    - "{{ postgres_ci_db | default('liftoffstage') }}"
+                    - -h
+                    - 127.0.0.1
+                initialDelaySeconds: 60
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 3
+              readinessProbe:
+                exec:
+                  command:
+                    - pg_isready
+                    - -U
+                    - "{{ postgres_ci_user | default('liftoffstage') }}"
+                    - -d
+                    - "{{ postgres_ci_db | default('liftoffstage') }}"
+                    - -h
+                    - 127.0.0.1
+                initialDelaySeconds: 30
+                periodSeconds: 5
+                timeoutSeconds: 3
+                failureThreshold: 3
+              volumeMounts:
+              - name: postgres-ci-data
+                mountPath: /var/lib/postgresql/data
+            imagePullSecrets:
+              - name: regcred
+            # Remove the initContainers section entirely
+            volumes:
+            - name: postgres-ci-data
+              persistentVolumeClaim:
+                claimName: postgres-ci-pvc
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+- name: Create PostgreSQL CI Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: postgres-ci
+        labels:
+          app: postgres-ci
+      spec:
+        type: NodePort
+        ports:
+          - port: 5432
+            targetPort: 5432
+            nodePort: 30432  # Or any port in the 30000-32767 range
+            protocol: TCP
+            name: postgres
+        selector:
+          app: postgres-ci
+  delegate_to: "{{ groups['master'][0] }}"
+
+# ===== RabbitMQ Service =====
+- name: Create RabbitMQ PersistentVolume
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: rabbitmq-pv
+        labels:
+          app: rabbitmq
+      spec:
+        capacity:
+          storage: "{{ rabbitmq_storage_size | default('5Gi') }}"
+        accessModes:
+          - ReadWriteOnce
+        persistentVolumeReclaimPolicy: Retain
+        storageClassName: local-storage
+        hostPath:
+          path: "{{ rabbitmq_host_path | default('/opt/liftoffstage/rabbitmq') }}"
+          type: DirectoryOrCreate
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create RabbitMQ PersistentVolumeClaim
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: rabbitmq-pvc
+        labels:
+          app: rabbitmq
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-storage
+        resources:
+          requests:
+            storage: "{{ rabbitmq_storage_size | default('5Gi') }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+- name: Create RabbitMQ Deployment
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rabbitmq
+        labels:
+          app: rabbitmq
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: rabbitmq
+        template:
+          metadata:
+            labels:
+              app: rabbitmq
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ liftoffstage_target_node | default('worker') }}"
+            containers:
+            - name: rabbitmq
+              image: rabbitmq:management-alpine
+              ports:
+              - name: amqp
+                containerPort: 5672
+                protocol: TCP
+              - name: management
+                containerPort: 15672
+                protocol: TCP
+              env:
+              - name: RABBITMQ_DEFAULT_USER
+                value: "{{ rabbitmq_default_user | default('liftoffstage') }}"
+              - name: RABBITMQ_DEFAULT_PASS
+                value: "{{ rabbitmq_default_pass | default('liftoffstage123') }}"
+              resources:
+                requests:
+                  memory: "{{ rabbitmq_memory_request | default('256Mi') }}"
+                  cpu: "{{ rabbitmq_cpu_request | default('100m') }}"
+                limits:
+                  memory: "{{ rabbitmq_memory_limit | default('512Mi') }}"
+                  cpu: "{{ rabbitmq_cpu_limit | default('300m') }}"
+              livenessProbe:
+                exec:
+                  command:
+                    - rabbitmq-diagnostics
+                    - -q
+                    - ping
+                initialDelaySeconds: 60
+                periodSeconds: 60
+                timeoutSeconds: 15
+                failureThreshold: 3
+              readinessProbe:
+                exec:
+                  command:
+                    - rabbitmq-diagnostics
+                    - -q
+                    - check_running
+                initialDelaySeconds: 20
+                periodSeconds: 60
+                timeoutSeconds: 10
+                failureThreshold: 3
+              volumeMounts:
+              - name: rabbitmq-data
+                mountPath: /var/lib/rabbitmq
+            volumes:
+            - name: rabbitmq-data
+              persistentVolumeClaim:
+                claimName: rabbitmq-pvc
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create RabbitMQ Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: rabbitmq
+        labels:
+          app: rabbitmq
+      spec:
+        type: NodePort
+        ports:
+          - port: 5672
+            targetPort: 5672
+            nodePort: 32011
+            protocol: TCP
+            name: amqp
+          - port: 15672
+            targetPort: 15672
+            nodePort: 32012
+            protocol: TCP
+            name: management
+        selector:
+          app: rabbitmq
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+# ===== Jenkins Service =====
+
+- name: Create Jenkins PersistentVolume
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: jenkins-liftoff-pv
+        labels:
+          app: jenkins-liftoff
+      spec:
+        capacity:
+          storage: "{{ jenkins_liftoff_storage_size | default('20Gi') }}"
+        accessModes:
+          - ReadWriteOnce
+        persistentVolumeReclaimPolicy: Retain
+        storageClassName: local-storage
+        hostPath:
+          path: "{{ jenkins_liftoff_host_path | default('/opt/liftoffstage/jenkins') }}"
+          type: DirectoryOrCreate
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+- name: Create Jenkins PersistentVolumeClaim
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: jenkins-liftoff-pvc
+        labels:
+          app: jenkins-liftoff
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-storage
+        resources:
+          requests:
+            storage: "{{ jenkins_liftoff_storage_size | default('20Gi') }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Create Jenkins Deployment
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: jenkins-liftoff
+        labels:
+          app: jenkins-liftoff
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: jenkins-liftoff
+        template:
+          metadata:
+            labels:
+              app: jenkins-liftoff
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ liftoffstage_target_node | default('worker') }}"
+            securityContext:
+              fsGroup: 1000
+              runAsUser: 1000
+              runAsGroup: 1000
+            initContainers:
+            - name: fix-permissions
+              image: busybox:1.35
+              command:
+                - sh
+                - -c
+                - |
+                  echo "Fixing permissions for Jenkins home directory..."
+                  chown -R 1000:1000 /var/jenkins_home
+                  chmod -R 755 /var/jenkins_home
+                  echo "Permissions fixed successfully"
+              securityContext:
+                runAsUser: 0
+              volumeMounts:
+              - name: jenkins-liftoff-home
+                mountPath: /var/jenkins_home
+            containers:
+            - name: jenkins-liftoff
+              image: jenkins/jenkins:jdk21
+              ports:
+              - name: http
+                containerPort: 8080
+                protocol: TCP
+              - name: agent
+                containerPort: 50000
+                protocol: TCP
+              env:
+              - name: JAVA_OPTS
+                value: "{{ jenkins_liftoff_java_opts | default('-Djenkins.install.runSetupWizard=false -Xmx1024m') }}"
+              - name: JENKINS_URL
+                value: "{{ jenkins_liftoff_url | default('http://jenkins-liftoff:8080') }}"
+              - name: JENKINS_ADMIN_USER
+                value: "{{ jenkins_liftoff_admin_user | default('admin') }}"
+              - name: JENKINS_ADMIN_PASSWORD
+                value: "{{ jenkins_liftoff_admin_password | default('admin123') }}"
+              securityContext:
+                runAsUser: 1000
+                runAsGroup: 1000
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+              resources:
+                requests:
+                  memory: "{{ jenkins_liftoff_memory_request | default('1Gi') }}"
+                  cpu: "{{ jenkins_liftoff_cpu_request | default('500m') }}"
+                limits:
+                  memory: "{{ jenkins_liftoff_memory_limit | default('2Gi') }}"
+                  cpu: "{{ jenkins_liftoff_cpu_limit | default('1000m') }}"
+              startupProbe:
+                httpGet:
+                  path: /login
+                  port: 8080
+                initialDelaySeconds: 60
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 30
+              livenessProbe:
+                httpGet:
+                  path: /login
+                  port: 8080
+                initialDelaySeconds: 0
+                periodSeconds: 30
+                timeoutSeconds: 10
+                failureThreshold: 3
+              readinessProbe:
+                httpGet:
+                  path: /login
+                  port: 8080
+                initialDelaySeconds: 0
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 3
+              volumeMounts:
+              - name: jenkins-liftoff-home
+                mountPath: /var/jenkins_home
+              - name: jenkins-init
+                mountPath: /var/jenkins_home/init.groovy.d
+                readOnly: true
+            volumes:
+            - name: jenkins-liftoff-home
+              persistentVolumeClaim:
+                claimName: jenkins-liftoff-pvc
+            - name: jenkins-init
+              hostPath:
+                path: /opt/liftoffstage/app-files/jenkins/init.groovy.d
+                type: Directory
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+- name: Create Jenkins Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: jenkins-liftoff
+        labels:
+          app: jenkins-liftoff
+      spec:
+        type: NodePort
+        ports:
+          - port: 8080
+            targetPort: 8080
+            nodePort: 32013
+            protocol: TCP
+            name: web
+          - port: 50000
+            targetPort: 50000
+            nodePort: 32014
+            protocol: TCP
+            name: agent
+        selector:
+          app: jenkins-liftoff
+  delegate_to: "{{ groups['master'][0] }}"
+
+# ===== Wait for deployments and display information =====
+- name: Wait for PostgreSQL CI deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: postgres-ci
+    namespace: "{{ ns_liftoffstage }}"
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Wait for RabbitMQ deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: rabbitmq
+    namespace: "{{ ns_liftoffstage }}"
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Wait for Jenkins deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: jenkins-liftoff
+    namespace: "{{ ns_liftoffstage }}"
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 600
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Display LiftOffStage services information
+  debug:
+    msg: |
+      LiftOffStage services are deployed and accessible:
+
+      📁 Application Files:
+         - Location: /opt/liftoffstage/app-files/ (on {{ liftoffstage_target_node | default('worker') }} node)
+         - PostgreSQL Init: /opt/liftoffstage/app-files/postgres_ci/init.sql
+         - Jenkins Init: /opt/liftoffstage/app-files/jenkins/init.groovy.d/init.groovy
+         - Docker Compose: /opt/liftoffstage/app-files/docker-compose.yml
+
+      🐘 PostgreSQL CI:
+         - External: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ postgres_ci_nodeport | default(30432) }}
+         - Internal: postgres-ci:5432 (within cluster)
+         - Database: {{ postgres_ci_db | default('liftoffstage') }}
+         - User: {{ postgres_ci_user | default('liftoffstage') }}
+         - Init Script: Mounted from host path
+
+      🐰 RabbitMQ:
+         - AMQP: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ rabbitmq_amqp_nodeport | default(32011) }}
+         - Management UI: http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ rabbitmq_management_nodeport | default(32012) }}
+         - User: {{ rabbitmq_default_user | default('liftoffstage') }}
+         - Password: {{ rabbitmq_default_pass | default('liftoffstage123') }}
+
+      🏗️ Jenkins:
+         - Web UI: http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_web_nodeport | default(32013) }}
+         - Agent Port: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_agent_nodeport | default(32014) }}
+         - Admin User: {{ jenkins_liftoff_admin_user | default('admin') }}
+         - Admin Password: {{ jenkins_liftoff_admin_password | default('admin123') }}
+         - Init Scripts: Mounted from host path
+
+      📦 Namespace: {{ ns_liftoffstage }}
+      🎯 Target Node: {{ liftoffstage_target_node | default('worker') }}
+      🔄 Deployment Method: Host path mounts (Docker Compose equivalent)
+
+- name: Create service summary ConfigMap
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_liftoffstage }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: liftoffstage-services-info
+        labels:
+          app: liftoffstage
+          component: info
+      data:
+        services.txt: |
+          LiftOffStage Services Information
+          ================================
+
+          PostgreSQL CI:
+          - External URL: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ postgres_ci_nodeport | default(30432) }}
+          - Internal URL: postgres-ci:5432
+          - Database: {{ postgres_ci_db | default('liftoffstage') }}
+          - User: {{ postgres_ci_user | default('liftoffstage') }}
+
+          RabbitMQ:
+          - AMQP Port: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ rabbitmq_amqp_nodeport | default(32011) }}
+          - Management UI: http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ rabbitmq_management_nodeport | default(32012) }}
+          - User: {{ rabbitmq_default_user | default('liftoffstage') }}
+
+          Jenkins:
+          - Web UI: http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_web_nodeport | default(32013) }}
+          - Agent Port: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_agent_nodeport | default(32014) }}
+          - Admin User: {{ jenkins_liftoff_admin_user | default('admin') }}
+
+          Deployment Details:
+          - Namespace: {{ ns_liftoffstage }}
+          - Target Node: {{ liftoffstage_target_node | default('worker') }}
+          - Deployed: {{ ansible_date_time.iso8601 }}
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+# ===== Optional: Verify services are responding =====
+- name: Wait for PostgreSQL to be ready for connections
+  wait_for:
+    host: "{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}"
+    port: "{{ postgres_ci_nodeport | default(30432) }}"
+    timeout: 60
+  register: postgres_check
+  delegate_to: "{{ groups['master'][0] }}"
+  ignore_errors: true
+
+- name: Wait for RabbitMQ Management UI to be ready
+  uri:
+    url: "http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ rabbitmq_management_nodeport | default(32012) }}"
+    method: GET
+    status_code: 200
+  register: rabbitmq_check
+  until: rabbitmq_check is succeeded
+  retries: 12
+  delay: 10
+  delegate_to: "{{ groups['master'][0] }}"
+  ignore_errors: true
+
+- name: Wait for Jenkins Web UI to be ready
+  uri:
+    url: "http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_web_nodeport | default(32013) }}/login"
+    method: GET
+    status_code: 200
+  register: jenkins_check
+  until: jenkins_check is succeeded
+  retries: 20
+  delay: 15
+  delegate_to: "{{ groups['master'][0] }}"
+  ignore_errors: true
+
+- name: Display final service status
+  debug:
+    msg: |
+      🎉 LiftOffStage Deployment Complete!
+
+      Service Status:
+      - PostgreSQL CI: {{ 'Ready ✅' if postgres_check is succeeded else 'Check manually ⚠️' }}
+      - RabbitMQ: {{ 'Ready ✅' if rabbitmq_check is succeeded else 'Check manually ⚠️' }}
+      - Jenkins: {{ 'Ready ✅' if jenkins_check is succeeded else 'Check manually ⚠️' }}
+
+      Service URLs:
+      - PostgreSQL: {{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ postgres_ci_nodeport | default(30432) }}
+      - RabbitMQ UI: http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ rabbitmq_management_nodeport | default(32012) }}
+      - Jenkins UI: http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_web_nodeport | default(32013) }}
+
+      Next Steps:
+      1. Access Jenkins UI and complete any remaining setup
+      2. Configure RabbitMQ queues as needed
+      3. Test PostgreSQL connections from your applications
+

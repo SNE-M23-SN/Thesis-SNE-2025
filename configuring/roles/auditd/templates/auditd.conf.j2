@@ -1,0 +1,44 @@
+# Audit rules for comprehensive system monitoring
+
+# Increase the buffer size to handle busy systems
+-b 8192
+
+# Monitor system calls related to user and group management
+-w /etc/passwd -p wa -k user-modify
+-w /etc/shadow -p wa -k user-modify
+-w /etc/group -p wa -k group-modify
+-w /etc/gshadow -p wa -k group-modify
+
+# Monitor changes to system files and directories
+-w /etc/sudoers -p wa -k sudoers-modify
+-w /etc/hosts -p wa -k hosts-modify
+-w /etc/resolv.conf -p wa -k resolv-conf-modify
+
+# Monitor the execution of commands
+-a always,exit -F arch=b64 -S execve -k exec-commands
+-a always,exit -F arch=b32 -S execve -k exec-commands
+
+# Monitor access to sensitive files
+-w /root/ -p rwxa -k root-access
+-w /var/log/auth.log -p rwxa -k auth-log-access
+-w /var/log/syslog -p rwxa -k syslog-access
+
+# Monitor network-related actions
+-w /etc/network/interfaces -p wa -k network-modify
+-w /etc/firewall.conf -p wa -k firewall-modify
+
+# Monitor changes to the audit configuration itself
+-w /etc/audit/audit.rules -p wa -k audit-rules-modify
+
+# Log all attempts to access the audit logs
+-a always,exit -F dir=/var/log/audit/ -F perm=rwxa -k audit-log-access
+
+# Monitor any changes in kernel parameters (sysctl)
+-w /proc/sys/ -p wa -k sysctl-change
+
+# Monitor file deletions in critical directories
+-a always,exit -F dir=/etc/ -F perm=wa -S unlink,rmdir,rename,renameat,link,linkat -k etc-file-delete
+
+# Ensure that auditd itself is monitored for process execution
+-w /usr/sbin/auditd -p x -k auditd-exec
+

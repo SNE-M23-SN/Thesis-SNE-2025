@@ -1,0 +1,72 @@
+name: Deploy The Infrastructure
+
+on:
+  workflow_dispatch:
+
+
+env:
+  TF_LOG: INFO
+  TF_VAR_public_key: ${{ secrets.PUBLIC_KEY }}
+  TF_VAR_bucket_name: ${{ secrets.BUCKET_NAME }}
+  TF_VAR_bucket_region: ${{ secrets.BUCKET_REGION }}
+  TF_INPUT: false
+
+jobs: 
+  OpenTofu_process:
+    runs-on: ubuntu-latest
+    # Use the Bash shell regardless whether the GitHub Actions runner is ubuntu-latest, macos-latest, or windows-latest
+    # Set the working directory to ./provisioning for the config files
+    defaults:
+        run:
+          shell: bash
+          working-directory: ./provisioning
+    steps:
+    # Checkout the repository to the GitHub Actions runner
+    - name: Checkout
+      uses: actions/checkout@v3
+      
+    - name: Setup OpenTofu
+      uses: opentofu/setup-opentofu@v1
+      with:
+        tofu_version: 1.6.2
+
+    - name: OpenTofu Init
+      id: init
+      run: tofu init -backend-config="access_key=${{ secrets.ACCESS_KEY }}" -backend-config="secret_key=${{ secrets.SECRET_KEY }}"
+      
+      # Format the code
+    - name: Tofu Format
+      run: tofu fmt
+
+      # Run a Tofu fmt to check syntax
+    - name: Tofu Format
+      id: fmt
+      run: tofu fmt -check
+
+    # Run a Tofu validate
+    - name: Tofu Validate
+      id: validate
+      # Run even if formatting fails
+      if: success() || failure()
+      run: tofu validate -no-color
+        
+    - name: OpenTofu Plan
+      id: plan
+      run: tofu plan -no-color -out=tfplan -var yandex_token=${{ secrets.YANDEX_TOKEN }} -var yandex_cloud_id=${{ secrets.YANDEX_CLOUD_ID }} 
+          
+    - name: OpenTofu Apply
+      id: apply
+      run: tofu apply -auto-approve tfplan
+      
+    - name: Run playbook
+      id: ansible-playbook
+      uses: dawidd6/action-ansible-playbook@v2
+      with:
+        playbook: main.yml
+        directory: ../configuring
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+      env:
+        GOOGLE_GEMINI_API_KEY: ${{ secrets.GOOGLE_GEMINI_API_KEY }}
+        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        DOCKER_REPO: ${{ secrets.DOCKER_REPO }}           

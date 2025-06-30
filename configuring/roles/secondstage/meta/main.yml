@@ -1,0 +1,41 @@
+---
+galaxy_info:
+  author: Khasan Abdurakhmanov
+  description: Ansible role for deploying SecondStage AI Anomaly Detection & Analysis System
+  company: DevSecOps Platform
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+  galaxy_tags:
+    - kubernetes
+    - docker
+    - ai
+    - anomaly-detection
+    - devsecops
+    - spring-boot
+    - java
+    - gemini
+    - cicd
+    - monitoring
+    - vpn
+    - openvpn
+
+#dependencies:
+#  # Core infrastructure dependencies
+#  - role: common
+#  - role: containerd
+#  - role: kubernetes
+#  
+#  # SecondStage requires LiftOffStage services (PostgreSQL CI, RabbitMQ)
+#  # Note: LiftOffStage should be deployed before SecondStage
+#  - role: liftoffstage
+
+collections:
+  - community.kubernetes
+  - kubernetes.core
+  - community.docker
+

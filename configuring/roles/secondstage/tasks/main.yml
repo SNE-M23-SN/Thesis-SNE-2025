@@ -1,0 +1,791 @@
+---
+# ===== System Preparation =====
+- name: Check for running apt or unattended-upgrade processes
+  shell: ps aux | grep -E "apt|unattended-upgrade" | grep -v grep
+  register: running_processes
+  ignore_errors: true
+
+- name: Kill any running apt or unattended-upgrade processes (if found)
+  ansible.builtin.shell: "kill -9 $(ps aux | grep -E 'apt|unattended-upgrade' | awk '{print $2}')"
+  when: running_processes.stdout != ""
+  ignore_errors: true
+
+- name: Ensure apt lock files are removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/dpkg/lock
+    - /var/cache/apt/archives/lock
+    - /var/lib/apt/lists/lock
+
+- name: Run dpkg reconfigure if necessary
+  ansible.builtin.command: dpkg --configure -a
+  when: running_processes.stdout != ""
+  register: dpkg_configure
+  changed_when: dpkg_configure.rc == 0
+
+- name: Install required packages
+  apt:
+    name:
+      - openvpn
+      - iproute2
+      - iptables-persistent
+      - dnsutils
+      - curl
+      - netcat-openbsd
+    state: present
+    update_cache: yes
+
+
+- name: Install python3-pip
+  apt:
+    name: python3-pip
+    state: present
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: install pre-requisites
+  pip:
+    name:
+      - openshift
+      - pyyaml
+      - kubernetes
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+# ===== Create Namespace =====
+- name: Create SecondStage Namespace
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ns_secondstage }}"
+        labels:
+          name: "{{ ns_secondstage }}"
+          app: secondstage
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+# ===== Copy SecondStage files to target node =====
+- name: Create SecondStage application directory on target node
+  file:
+    path: /opt/secondstage/app-files
+    state: directory
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+
+
+- name: Copy SecondStage ZIP to target node
+  ansible.builtin.copy:
+    src: "SecondStage.zip"
+    dest: "/tmp/secondstage.zip"
+    mode: '0644'
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+- name: Extract SecondStage application
+  ansible.builtin.unarchive:
+    src: "/tmp/secondstage.zip"
+    dest: "/opt/secondstage/app-files/"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+- name: Clean up ZIP file
+  ansible.builtin.file:
+    path: "/tmp/secondstage.zip"
+    state: absent
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+
+- name: Verify copied files structure
+  stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/secondstage/app-files/api_working/Dockerfile
+    - /opt/secondstage/app-files/api_working/docker-compose.yml
+    - /opt/secondstage/app-files/diploma_working/Dockerfile
+    - /opt/secondstage/app-files/diploma_working/docker-compose.yml
+    - /opt/secondstage/app-files/vpn-setup.sh
+    - /opt/secondstage/app-files/domain-route.sh
+    - /opt/secondstage/app-files/vpn_conf
+  register: file_check
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+- name: Display file verification results
+  debug:
+    msg: "File {{ item.item }} exists: {{ item.stat.exists }}"
+  loop: "{{ file_check.results }}"
+  when: not item.stat.exists
+  failed_when: not item.stat.exists
+
+
+- name: Read Docker config from target machine
+  slurp:
+    src: /root/.docker/config.json
+  register: docker_config
+
+
+- name: Create image pull secret for private registry
+  community.kubernetes.k8s:
+    state: present
+    kubeconfig: /home/ubuntu/.kube/config
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: regcred
+        namespace: "{{ ns_secondstage }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ docker_config.content }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+
+
+# ===== Build Docker Images =====
+
+
+- name: Build SecondStage API Docker image
+  ansible.builtin.shell: |
+    "{{ buildkit_install_dir }}/buildctl-daemonless.sh" build \
+      --frontend dockerfile.v0 \
+      --local context=/opt/secondstage/app-files/api_working \
+      --local dockerfile=/opt/secondstage/app-files/api_working \
+      --output type=image,name="{{ secondstage_image_repo }}:{{ secondstage_api_image_name | default('secondstage') }}-{{ secondstage_api_image_tag | default('api') }}",push=true
+  register: secondstage_api_build
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+
+
+- name: Build SecondStage APP Docker image
+  ansible.builtin.shell: |
+    "{{ buildkit_install_dir }}/buildctl-daemonless.sh" build \
+      --frontend dockerfile.v0 \
+      --local context=/opt/secondstage/app-files/diploma_working \
+      --local dockerfile=/opt/secondstage/app-files/diploma_working \
+      --output type=image,name="{{ secondstage_image_repo }}:{{ secondstage_app_image_name | default('secondstage') }}-{{ secondstage_app_image_tag | default('app') }}",push=true
+  register: secondstage_app_build
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+
+- name: Check build command succeeded (API)
+  assert:
+    that: secondstage_api_build.rc == 0
+    fail_msg: "SecondStage-API image build failed with return code {{ secondstage_api_build.rc }}"
+    success_msg: "SecondStage-API image build completed successfully"
+
+
+- name: Check build command succeeded (APP)
+  assert:
+    that: secondstage_app_build.rc == 0
+    fail_msg: "SecondStage-APP image build failed with return code {{ secondstage_app_build.rc }}"
+    success_msg: "SecondStage-APP image build completed successfully"
+
+- name: Extract image digest from build API output
+  set_fact:
+    secondstage_api_image_digest: "{{ secondstage_api_build.stdout | regex_search('digest: ([a-zA-Z0-9:]+)', '\\1') }}"
+  when: "'digest:' in secondstage_api_build.stdout"
+
+- name: Extract image digest from build APP output
+  set_fact:
+    secondstage_app_image_digest: "{{ secondstage_app_build.stdout | regex_search('digest: ([a-zA-Z0-9:]+)', '\\1') }}"
+  when: "'digest:' in secondstage_app_build.stdout"
+
+
+- name: Extract and display builds summaries
+  debug:
+    msg: |
+      ✅ SecondStage-API Image Build Summary:
+      - Image: {{ secondstage_image_repo }}:{{ secondstage_api_image_name | default('secondstage') }}-{{ secondstage_api_image_tag | default('api') }}
+      - Build Status: SUCCESS
+      - Build Time: {{ ansible_date_time.iso8601 }}
+      {% if secondstage_api_image_digest is defined %}
+      - Digest: {{ secondstage_api_image_digest }}
+      {% endif %}
+      ✅ SecondStage-APP Image Build Summary:
+      - Image: {{ secondstage_image_repo }}:{{ secondstage_app_image_name | default('secondstage') }}-{{ secondstage_app_image_tag | default('app') }}
+      - Build Status: SUCCESS
+      - Build Time: {{ ansible_date_time.iso8601 }}
+      {% if secondstage_app_image_digest is defined %}
+      - Digest: {{ secondstage_app_image_digest }}
+      {% endif %}
+
+
+# ===== Create ConfigMap and Secrets =====
+- name: Create SecondStage ConfigMap
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: secondstage-config
+        labels:
+          app: secondstage
+      data:
+        # API App Configuration
+        API_SERVER_PORT: "{{ api_app_port | default('8383') }}"
+        API_JENKINS_URL: "{{ jenkins_url | default('http://jenkins-liftoff.liftoffstage.svc.cluster.local:8080') }}"
+        API_DATABASE_URL: "{{ api_database_url | default('jdbc:postgresql://postgres-ci.liftoffstage.svc.cluster.local:5432/postgres') }}"
+        API_CORS_ALLOWED_ORIGINS: "{{ api_cors_origins | default('*') }}"
+        API_LOG_LEVEL: "{{ api_log_level | default('DEBUG') }}"
+        # Diploma App Configuration
+        DIPLOMA_SERVER_PORT: "{{ diploma_app_port | default('8282') }}"
+        DIPLOMA_DB_URL: "{{ diploma_database_url | default('jdbc:postgresql://postgres-ci.liftoffstage.svc.cluster.local:5432/postgres') }}"
+        DIPLOMA_RABBITMQ_HOST: "{{ rabbitmq_host | default('rabbitmq.liftoffstage.svc.cluster.local') }}"
+        DIPLOMA_RABBITMQ_PORT: "{{ rabbitmq_port | default('5672') }}"
+        DIPLOMA_AI_MODEL: "{{ ai_model | default('gemini-2.5-pro') }}"
+        DIPLOMA_AI_TEMPERATURE: "{{ ai_temperature | default('0.3') }}"
+        DIPLOMA_AI_RESPONSE_FORMAT: "{{ ai_response_format | default('JSON_OBJECT') }}"
+        DIPLOMA_AI_BASE_URL: "{{ ai_base_url | default('https://generativelanguage.googleapis.com') }}"
+        DIPLOMA_QUEUE_NAME: "{{ queue_name | default('Jenkins') }}"
+        DIPLOMA_LOG_LEVEL_APP: "{{ diploma_log_level | default('DEBUG') }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create SecondStage Secrets
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: secondstage-secrets
+        labels:
+          app: secondstage
+      type: Opaque
+      data:
+        # API App Secrets
+        API_JENKINS_USERNAME: "{{ api_jenkins_username | default('admin') | b64encode }}"
+        API_JENKINS_PASSWORD: "{{ api_jenkins_password | default('admin123') | b64encode }}"
+        API_DATABASE_USERNAME: "{{ api_database_username | default('postgres') | b64encode }}"
+        API_DATABASE_PASSWORD: "{{ api_database_password | default('postgres') | b64encode }}"
+        # Diploma App Secrets
+        DIPLOMA_AI_API_KEY: "{{ diploma_ai_api_key | b64encode }}"
+        DIPLOMA_DB_USERNAME: "{{ diploma_database_username | default('postgres') | b64encode }}"
+        DIPLOMA_DB_PASSWORD: "{{ diploma_database_password | default('postgres') | b64encode }}"
+        DIPLOMA_RABBITMQ_USERNAME: "{{ diploma_rabbitmq_username | default('guest') | b64encode }}"
+        DIPLOMA_RABBITMQ_PASSWORD: "{{ diploma_rabbitmq_password | default('guest') | b64encode }}"
+  delegate_to: "{{ groups['master'][0] }}"
+
+# ===== Deploy Diploma Application =====
+- name: Deploy SecondStage Diploma Application
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: secondstage-diploma
+        labels:
+          app: secondstage-diploma
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: secondstage-diploma
+        template:
+          metadata:
+            labels:
+              app: secondstage-diploma
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ secondstage_target_node | default('worker') }}"
+            containers:
+            - name: diploma
+              image: "{{ secondstage_image_repo }}:{{ secondstage_app_image_name | default('secondstage') }}-{{ secondstage_app_image_tag | default('app') }}"
+              ports:
+              - name: http
+                containerPort: 8282
+                protocol: TCP
+              env:
+              - name: SERVER_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_SERVER_PORT
+              - name: AI_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: DIPLOMA_AI_API_KEY
+              - name: AI_MODEL
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_AI_MODEL
+              - name: AI_TEMPERATURE
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_AI_TEMPERATURE
+              - name: AI_RESPONSE_FORMAT
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_AI_RESPONSE_FORMAT
+              - name: AI_BASE_URL
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_AI_BASE_URL
+              - name: DB_URL
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_DB_URL
+              - name: DB_USERNAME
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: DIPLOMA_DB_USERNAME
+              - name: DB_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: DIPLOMA_DB_PASSWORD
+              - name: RABBITMQ_HOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_RABBITMQ_HOST
+              - name: RABBITMQ_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_RABBITMQ_PORT
+              - name: RABBITMQ_USERNAME
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: DIPLOMA_RABBITMQ_USERNAME
+              - name: RABBITMQ_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: DIPLOMA_RABBITMQ_PASSWORD
+              - name: QUEUE_NAME
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_QUEUE_NAME
+              - name: LOG_LEVEL_APP
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: DIPLOMA_LOG_LEVEL_APP
+              resources:
+                requests:
+                  memory: "{{ diploma_memory_request | default('2Gi') }}"
+                  cpu: "{{ diploma_cpu_request | default('500m') }}"
+                limits:
+                  memory: "{{ diploma_memory_limit | default('4Gi') }}"
+                  cpu: "{{ diploma_cpu_limit | default('1500m') }}"
+            imagePullSecrets:
+              - name: regcred
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create SecondStage Diploma Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: secondstage-diploma
+        labels:
+          app: secondstage-diploma
+      spec:
+        type: NodePort
+        ports:
+          - port: 8282
+            targetPort: 8282
+            nodePort: 32017
+            protocol: TCP
+            name: http
+        selector:
+          app: secondstage-diploma
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Wait for Diploma deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: secondstage-diploma
+    namespace: "{{ ns_secondstage }}"
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 600
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+# ===== Deploy API Application =====
+- name: Deploy SecondStage API Application
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: secondstage-api
+        labels:
+          app: secondstage-api
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: secondstage-api
+        template:
+          metadata:
+            labels:
+              app: secondstage-api
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                       - key: kubernetes.io/hostname
+                         operator: In
+                         values:
+                          - "{{ secondstage_target_node | default('worker') }}"
+            containers:
+            - name: api
+              image: "{{ secondstage_image_repo }}:{{ secondstage_api_image_name | default('secondstage') }}-{{ secondstage_api_image_tag | default('api') }}"
+              ports:
+              - name: http
+                containerPort: 8383
+                protocol: TCP
+              env:
+              - name: SERVER_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: API_SERVER_PORT
+              - name: JENKINS_URL
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: API_JENKINS_URL
+              - name: JENKINS_USERNAME
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: API_JENKINS_USERNAME
+              - name: JENKINS_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: API_JENKINS_PASSWORD
+              - name: DATABASE_URL
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: API_DATABASE_URL
+              - name: DATABASE_USERNAME
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: API_DATABASE_USERNAME
+              - name: DATABASE_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: secondstage-secrets
+                    key: API_DATABASE_PASSWORD
+              - name: CORS_ALLOWED_ORIGINS
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: API_CORS_ALLOWED_ORIGINS
+              - name: LOG_LEVEL_APP
+                valueFrom:
+                  configMapKeyRef:
+                    name: secondstage-config
+                    key: API_LOG_LEVEL
+              resources:
+                requests:
+                  memory: "{{ api_memory_request | default('1Gi') }}"
+                  cpu: "{{ api_cpu_request | default('500m') }}"
+                limits:
+                  memory: "{{ api_memory_limit | default('2Gi') }}"
+                  cpu: "{{ api_cpu_limit | default('1000m') }}"
+              livenessProbe:
+                httpGet:
+                  path: /api/dashboard/jobs
+                  port: 8383
+                initialDelaySeconds: 60
+                periodSeconds: 30
+                timeoutSeconds: 10
+                failureThreshold: 3
+              readinessProbe:
+                httpGet:
+                  path: /api/dashboard/jobs
+                  port: 8383
+                initialDelaySeconds: 30
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 3
+            imagePullSecrets:
+              - name: regcred
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Create SecondStage API Service
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: secondstage-api
+        labels:
+          app: secondstage-api
+      spec:
+        type: NodePort
+        ports:
+          - port: 8383
+            targetPort: 8383
+            nodePort: 32016
+            protocol: TCP
+            name: http
+        selector:
+          app: secondstage-api
+  delegate_to: "{{ groups['master'][0] }}"
+
+# ===== VPN Setup (Phase 1: Infrastructure) =====
+- name: Copy VPN configurations to /etc/openvpn
+  copy:
+    src: "/opt/secondstage/app-files/vpn_conf/"
+    dest: "/etc/openvpn/"
+    mode: '0600'
+    owner: root
+    group: root
+    remote_src: true
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+- name: Copy VPN setup scripts to /usr/local/bin
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: '0755'
+    owner: root
+    group: root
+    remote_src: true
+  loop:
+    - { src: "/opt/secondstage/app-files/vpn-setup.sh", dest: "/usr/local/bin/vpn-setup.sh" }
+    - { src: "/opt/secondstage/app-files/domain-route.sh", dest: "/usr/local/bin/domain-route.sh" }
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+- name: Setup VPN namespace (without starting VPN)
+  command: /usr/local/bin/vpn-setup.sh setup
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+  register: vpn_setup_result
+
+- name: Display VPN setup result
+  debug:
+    msg: "VPN namespace setup: {{ vpn_setup_result.stdout_lines }}"
+
+- name: Configure domain routing for Google Gemini API
+  command: /usr/local/bin/domain-route.sh setup -d "{{ domain_to_route | default('generativelanguage.googleapis.com') }}"
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+  register: domain_route_result
+
+- name: Display domain routing setup result
+  debug:
+    msg: "Domain routing setup: {{ domain_route_result.stdout_lines }}"
+
+# ===== Wait for Applications to be Ready =====
+- name: Wait for API deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: secondstage-api
+    namespace: "{{ ns_secondstage }}"
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+  delegate_to: "{{ groups['master'][0] }}"
+
+- name: Wait for Diploma deployment to be ready
+  community.kubernetes.k8s_info:
+    kubeconfig: /home/ubuntu/.kube/config
+    api_version: apps/v1
+    kind: Deployment
+    name: secondstage-diploma
+    namespace: "{{ ns_secondstage }}"
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 600
+  delegate_to: "{{ groups['master'][0] }}"
+
+
+- name: Check if any OpenVPN process is running
+  ansible.builtin.shell: ps aux | grep openvpn | grep -v grep
+  register: openvpn_processes
+  ignore_errors: yes
+  changed_when: false
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+
+# ===== VPN Activation (Phase 2: Post-Deployment) =====
+- name: Start VPN connection
+  command: /usr/local/bin/vpn-setup.sh start-vpn -c "/etc/openvpn/{{ vpn_config_file | default('Canada, Quebec S2.ovpn') }}"
+  delegate_to: "{{ secondstage_target_node | default('worker') }}"
+  register: vpn_start_result
+  when: openvpn_processes.rc != 0
+
+- name: Display VPN start result
+  ansible.builtin.debug:
+    msg: "VPN connection started: {{ vpn_start_result.stdout_lines }}"
+  when: openvpn_processes.rc != 0
+
+# ===== Connectivity Tests =====
+- name: Test connectivity to LiftOffStage PostgreSQL
+  wait_for:
+    host: "{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}"
+    port: "{{ postgres_ci_nodeport | default(30432) }}"
+    timeout: 30
+  delegate_to: localhost
+  ignore_errors: true
+  register: postgres_connectivity
+  become: false
+
+- name: Test connectivity to LiftOffStage RabbitMQ
+  wait_for:
+    host: "{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}"
+    port: "{{ rabbitmq_amqp_nodeport | default(32011) }}"
+    timeout: 30
+  delegate_to: localhost
+  ignore_errors: true
+  register: rabbitmq_connectivity
+  become: false
+
+- name: Test API application accessibility
+  uri:
+    url: "http://{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}:{{ api_nodeport | default(32016) }}/api/dashboard/jobs"
+    method: GET
+    status_code: 200
+  register: api_check
+  until: api_check.status == 200
+  retries: 10
+  delay: 15
+  delegate_to: localhost
+  ignore_errors: true
+  become: false
+
+# ===== Display Deployment Summary =====
+- name: Display SecondStage deployment information
+  debug:
+    msg: |
+      🎉 SecondStage Deployment Complete!
+
+      📱 Applications Deployed:
+
+      🔍 API Application (Jenkins Monitoring):
+         - External URL: http://{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}:{{ api_nodeport | default(32016) }}/api/dashboard
+         - Internal URL: secondstage-api.secondstage.svc.cluster.local:8383
+         - Status: {{ 'Ready ✅' if api_check.status == 200 else 'Check manually ⚠️' }}
+         - Features: Build monitoring, anomaly detection, dashboard analytics
+
+      🤖 Diploma Application (AI Anomaly Detection):
+         - External URL: http://{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}:{{ diploma_nodeport | default(32017) }}/actuator/health
+         - Internal URL: secondstage-diploma.secondstage.svc.cluster.local:8282
+         - Status: Ready ✅
+         - Features: AI analysis, conversation memory, 14 log types processing
+
+      🌐 VPN Configuration:
+         - VPN Namespace: {{ vpn_namespace | default('vpnspace') }}
+         - VPN Config: {{ vpn_config_file | default('Canada, Quebec S2.ovpn') }}
+         - Domain Routing: {{ domain_to_route | default('generativelanguage.googleapis.com') }}
+         - Status: {{ 'Active ✅' if (vpn_start_result is defined and vpn_start_result.rc is defined and vpn_start_result.rc == 0) else 'Already active or check manually ⚠️'}}
+
+      🔗 External Service Connectivity:
+         - PostgreSQL CI: {{ 'Connected ✅' if postgres_connectivity.failed == false else 'Check manually ⚠️' }}
+         - RabbitMQ: {{ 'Connected ✅' if rabbitmq_connectivity.failed == false else 'Check manually ⚠️' }}
+         - Jenkins: Available via LiftOffStage services
+
+      📦 Deployment Details:
+         - Namespace: {{ ns_secondstage }}
+         - Target Node: {{ secondstage_target_node | default('worker') }}
+         - API Port: {{ api_app_port | default('8383') }} (NodePort: {{ api_nodeport | default(32016) }})
+         - Diploma Port: {{ diploma_app_port | default('8282') }} (NodePort: {{ diploma_nodeport | default(32017) }})
+
+      🎯 Next Steps:
+         1. Access API dashboard for Jenkins monitoring
+         2. Configure Jenkins to send logs to RabbitMQ queue
+         3. Monitor AI analysis results in Diploma application
+         4. Verify Google Gemini API access through VPN
+
+- name: Create deployment summary ConfigMap
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    namespace: "{{ ns_secondstage }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: secondstage-deployment-info
+        labels:
+          app: secondstage
+          component: info
+      data:
+        deployment-summary.txt: |
+          SecondStage Deployment Summary
+          =============================
+
+          API Application:
+          - External URL: http://{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}:{{ api_nodeport | default(32016) }}/api/dashboard
+          - Internal URL: secondstage-api.secondstage.svc.cluster.local:8383
+          - Purpose: Jenkins monitoring and dashboard analytics
+
+          Diploma Application:
+          - External URL: http://{{ hostvars[secondstage_target_node | default('worker')].ansible_host }}:{{ diploma_nodeport | default(32017) }}/actuator/health
+          - Internal URL: secondstage-diploma.secondstage.svc.cluster.local:8282
+          - Purpose: AI-powered anomaly detection with conversation memory
+
+          VPN Configuration:
+          - Namespace: {{ vpn_namespace | default('vpnspace') }}
+          - Config File: {{ vpn_config_file | default('Canada, Quebec S2.ovpn') }}
+          - Domain Routing: {{ domain_to_route | default('generativelanguage.googleapis.com') }}
+
+          External Services:
+          - PostgreSQL CI: postgres-ci.liftoffstage.svc.cluster.local:5432
+          - RabbitMQ: rabbitmq.liftoffstage.svc.cluster.local:5672
+          - Jenkins: jenkins-liftoff.liftoffstage.svc.cluster.local:8080
+
+          Deployment Details:
+          - Namespace: {{ ns_secondstage }}
+          - Target Node: {{ secondstage_target_node | default('worker') }}
+          - Deployed: {{ ansible_date_time.iso8601 }}
+
+          VPN Scripts Location:
+          - Setup Script: /usr/local/bin/vpn-setup.sh
+          - Domain Routing: /usr/local/bin/domain-route.sh
+          - VPN Configs: /etc/openvpn/
+  delegate_to: "{{ groups['master'][0] }}"

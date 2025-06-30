@@ -1,0 +1,3 @@
+---
+# FirstStage Application Variables (matching main.yml implementation)
+# These variables are used in tasks/main.yml with defaults

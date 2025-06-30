@@ -1,0 +1,232 @@
+---
+
+- name: Stop unattended-upgrades service
+  systemd:
+    name: unattended-upgrades
+    state: stopped
+    enabled: no
+    masked: yes  # This prevents systemd from starting it
+  failed_when: false
+
+- name: Kill any running unattended-upgrade processes
+  shell: |
+    pkill -9 -f "unattended-upgrade" 2>/dev/null || true
+    pkill -9 -f "apt-daily" 2>/dev/null || true
+    pkill -9 -f "apt-daily-upgrade" 2>/dev/null || true
+  failed_when: false
+
+- name: Disable automatic updates in 20auto-upgrades
+  copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "0";
+      APT::Periodic::Unattended-Upgrade "0";
+      APT::Periodic::AutocleanInterval "0";
+      APT::Periodic::Download-Upgradeable-Packages "0";
+    mode: '0644'
+    backup: yes
+
+- name: Disable unattended-upgrades in 50unattended-upgrades
+  lineinfile:
+    path: /etc/apt/apt.conf.d/50unattended-upgrades
+    regexp: '^Unattended-Upgrade::Allowed-Origins'
+    line: 'Unattended-Upgrade::Allowed-Origins {};'
+    backup: yes
+
+- name: Disable apt-daily and apt-daily-upgrade timers
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+    masked: yes
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - apt-daily.service
+    - apt-daily-upgrade.service
+  failed_when: false
+
+- name: Create systemd override directory for unattended-upgrades
+  file:
+    path: /etc/systemd/system/unattended-upgrades.service.d
+    state: directory
+    mode: '0755'
+
+- name: Create systemd override to completely disable unattended-upgrades
+  copy:
+    dest: /etc/systemd/system/unattended-upgrades.service.d/override.conf
+    content: |
+      [Unit]
+      ConditionPathExists=!/etc/disable-unattended-upgrades
+      
+      [Service]
+      ExecStart=
+      ExecStart=/bin/true
+    mode: '0644'
+
+- name: Create disable marker file
+  file:
+    path: /etc/disable-unattended-upgrades
+    state: touch
+    mode: '0644'
+
+- name: Remove all apt locks
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/apt/lists/lock
+    - /var/cache/apt/archives/lock
+  failed_when: false
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+
+- name: Wait for all processes to settle
+  pause:
+    seconds: 5
+
+- name: Verify unattended-upgrades is disabled
+  shell: systemctl is-active unattended-upgrades
+  register: unattended_status
+  failed_when: false
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600  # Only update if cache is older than 1 hour
+  when: ansible_os_family == "Debian"
+  tags: 
+    - system
+    - update
+
+- name: Check for running apt/dpkg processes
+  shell: |
+    ps aux | grep -E "(apt|dpkg)" | grep -v grep | wc -l
+  register: apt_processes
+  changed_when: false
+  when: ansible_os_family == "Debian"
+  tags:
+    - system
+    - update
+
+- name: Wait for apt/dpkg processes to complete
+  shell: |
+    timeout=20  # 5 minutes timeout (actually 300 seconds this time!)
+    counter=0
+    while [ $counter -lt $timeout ]; do
+      if ! pgrep -f "apt|dpkg" > /dev/null; then
+        echo "No apt/dpkg processes running"
+        exit 0
+      fi
+      echo "Waiting for apt/dpkg processes to complete... ($counter/$timeout)"
+      sleep 2
+      counter=$((counter + 2))
+    done
+    
+    echo "Timeout reached, checking for stale locks"
+    exit 1
+  register: apt_wait_result
+  failed_when: false  # ← CRITICAL: Don't fail the task, let cleanup handle it
+  when: ansible_os_family == "Debian" and apt_processes.stdout|int > 0
+  tags:
+    - system
+    - update
+
+- name: Remove stale apt locks if processes timed out
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/apt/lists/lock
+    - /var/cache/apt/archives/lock
+  when:
+    - ansible_os_family == "Debian"
+    - apt_wait_result is defined
+    - apt_wait_result.failed is defined
+    - apt_wait_result.failed
+  tags:
+    - system
+    - update
+    - force-unlock
+
+- name: Reconfigure dpkg if locks were removed
+  shell: dpkg --configure -a
+  when:
+    - ansible_os_family == "Debian"
+    - apt_wait_result is defined
+    - apt_wait_result.failed is defined
+    - apt_wait_result.failed
+  tags:
+    - system
+    - update
+    - force-unlock
+
+- name: Kill hanging apt processes (emergency measure)
+  shell: |
+    # Kill any hanging apt/dpkg processes as last resort
+    pkill -f "apt-get|aptitude|dpkg|unattended-upgrade" || true
+    sleep 2
+  when:
+    - ansible_os_family == "Debian"
+    - apt_wait_result is defined
+    - apt_wait_result.failed is defined
+    - apt_wait_result.failed
+  tags:
+    - system
+    - update
+    - emergency
+
+- name: Force remove all apt locks (emergency measure)
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/dpkg/lock
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/apt/lists/lock
+    - /var/cache/apt/archives/lock
+  when:
+    - ansible_os_family == "Debian"
+    - apt_wait_result is defined
+    - apt_wait_result.failed is defined
+    - apt_wait_result.failed
+  ignore_errors: yes
+  tags:
+    - system
+    - update
+    - emergency
+
+- name: Update apt cache with retry mechanism
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  register: apt_update_result
+  retries: 3
+  delay: 10
+  until: apt_update_result is succeeded
+  when: ansible_os_family == "Debian"
+  tags:
+    - system
+    - update
+
+- name: Install common dependencies
+  package:
+    name: "{{ packages }}"
+    state: present
+  vars:
+    packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+      - unzip
+  tags:
+    - system
+    - packages

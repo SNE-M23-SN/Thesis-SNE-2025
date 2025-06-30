@@ -1,0 +1,66 @@
+---
+# LiftOffStage Role Default Variables
+
+# Installation directories
+buildkit_install_dir: "/usr/local/bin"
+
+# Namespace configuration
+ns_liftoffstage: "liftoffstage"
+
+# Target node configuration
+liftoffstage_target_node: "worker"
+
+# ===== PostgreSQL CI Configuration =====
+postgres_ci_db: "postgres"
+postgres_ci_user: "postgres"
+postgres_ci_password: "postgres"
+postgres_ci_storage_size: "10Gi"
+postgres_ci_host_path: "/opt/liftoffstage/postgres-ci"
+
+# PostgreSQL CI Docker Image Configuration
+postgres_ci_image_name: "postgres-ci"
+postgres_ci_image_tag: "17.5-cron"
+postgres_ci_image_repo: "docker.io/khasanabdurakhmanov/innopolis"
+
+# PostgreSQL CI NodePort Configuration
+postgres_ci_nodeport: 30432
+
+# PostgreSQL CI Resource limits
+postgres_ci_memory_request: "2Gi"
+postgres_ci_cpu_request: "1000m"
+postgres_ci_memory_limit: "4Gi"
+postgres_ci_cpu_limit: "2000m"
+
+# ===== RabbitMQ Configuration =====
+rabbitmq_default_user: "liftoffstage"
+rabbitmq_default_pass: "liftoffstage123"
+rabbitmq_storage_size: "5Gi"
+rabbitmq_host_path: "/opt/liftoffstage/rabbitmq"
+
+# RabbitMQ NodePort configuration
+rabbitmq_amqp_nodeport: 32011
+rabbitmq_management_nodeport: 32012
+
+# RabbitMQ Resource limits
+rabbitmq_memory_request: "1Gi"
+rabbitmq_cpu_request: "500m"
+rabbitmq_memory_limit: "2Gi"
+rabbitmq_cpu_limit: "1000m"
+
+# ===== Jenkins LiftOff Configuration =====
+jenkins_liftoff_admin_user: "admin"
+jenkins_liftoff_admin_password: "admin123"
+jenkins_liftoff_url: "http://{{ hostvars[liftoffstage_target_node | default('worker')].ansible_host }}:{{ jenkins_liftoff_web_nodeport | default(32013) }}"
+jenkins_liftoff_java_opts: "-Djenkins.install.runSetupWizard=false -Xms512m -Xmx1536m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+jenkins_liftoff_storage_size: "20Gi"
+jenkins_liftoff_host_path: "/opt/liftoffstage/jenkins"
+
+# Jenkins NodePort configuration
+jenkins_liftoff_web_nodeport: 32013
+jenkins_liftoff_agent_nodeport: 32014
+
+# Jenkins Resource limits
+jenkins_liftoff_memory_request: "4Gi"
+jenkins_liftoff_cpu_request: "2000m"
+jenkins_liftoff_memory_limit: "8Gi"
+jenkins_liftoff_cpu_limit: "4000m"

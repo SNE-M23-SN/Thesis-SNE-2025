@@ -1,0 +1,199 @@
+---
+# ===== STEP 1: Download and Extract BuildKit Binaries =====
+- name: Get system architecture
+  ansible.builtin.setup:
+    gather_subset:
+      - "hardware"
+  register: system_info
+
+- name: Set architecture fact (map Ansible arch to BuildKit arch)
+  ansible.builtin.set_fact:
+    buildkit_arch: >-
+      {%- if ansible_architecture == "x86_64" -%}
+      amd64
+      {%- elif ansible_architecture == "aarch64" -%}
+      arm64
+      {%- elif ansible_architecture == "armv7l" -%}
+      arm-v7
+      {%- else -%}
+      {{ ansible_architecture }}
+      {%- endif -%}
+
+- name: Download BuildKit tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/moby/buildkit/releases/download/{{ buildkit_version }}/buildkit-{{ buildkit_version }}.linux-{{ buildkit_arch }}.tar.gz"
+    dest: "{{ buildkit_tmp_dir }}/buildkit.tar.gz"
+    mode: '0644'
+
+- name: Create temporary extraction directory
+  ansible.builtin.file:
+    path: "{{ buildkit_tmp_dir }}/buildkit_extract"
+    state: directory
+    mode: '0755'
+
+- name: Extract BuildKit tarball
+  ansible.builtin.unarchive:
+    src: "{{ buildkit_tmp_dir }}/buildkit.tar.gz"
+    dest: "{{ buildkit_tmp_dir }}/buildkit_extract"
+    remote_src: yes
+
+- name: Find buildkitd binary location
+  ansible.builtin.find:
+    paths: "{{ buildkit_tmp_dir }}/buildkit_extract"
+    patterns: "buildkitd"
+    recurse: yes
+  register: buildkitd_location
+
+- name: Find buildctl binary location
+  ansible.builtin.find:
+    paths: "{{ buildkit_tmp_dir }}/buildkit_extract"
+    patterns: "buildctl"
+    recurse: yes
+  register: buildctl_location
+
+- name: Install buildkitd binary
+  ansible.builtin.copy:
+    src: "{{ buildkitd_location.files[0].path }}"
+    dest: "{{ buildkit_install_dir }}/buildkitd"
+    mode: '0755'
+    owner: root
+    group: root
+    remote_src: yes
+
+- name: Install buildctl binary
+  ansible.builtin.copy:
+    src: "{{ buildctl_location.files[0].path }}"
+    dest: "{{ buildkit_install_dir }}/buildctl"
+    mode: '0755'
+    owner: root
+    group: root
+    remote_src: yes
+
+# ===== STEP 2: Download buildctl-daemonless.sh Script =====
+- name: Download buildctl-daemonless script
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/moby/buildkit/{{ buildkit_version }}/examples/buildctl-daemonless/buildctl-daemonless.sh"
+    dest: "{{ buildkit_install_dir }}/buildctl-daemonless.sh"
+    mode: '0755'
+    owner: root
+    group: root
+
+# ===== STEP 3: Configure Docker Registry Credentials =====
+- name: Create .docker directory for root
+  ansible.builtin.file:
+    path: /root/.docker
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Configure Docker registry credentials (if provided)
+  ansible.builtin.copy:
+    content: |
+      {
+        "auths": {
+          "{{ docker_registry_url | default('https://index.docker.io/v1/') }}": {
+            "auth": "{{ (docker_username + ':' + docker_password) | b64encode }}"
+          }
+        }
+      }
+    dest: /root/.docker/config.json
+    mode: '0600'
+    owner: root
+    group: root
+  when: docker_username is defined and docker_password is defined
+
+- name: Create empty Docker config if no credentials provided
+  ansible.builtin.copy:
+    content: |
+      {
+        "auths": {}
+      }
+    dest: /root/.docker/config.json
+    mode: '0600'
+    owner: root
+    group: root
+  when: docker_username is not defined or docker_password is not defined
+
+# ===== STEP 4: Verify Containerd Prerequisite =====
+- name: Verify containerd is running
+  ansible.builtin.systemd:
+    name: containerd
+    state: started
+  register: containerd_status
+
+- name: Check containerd socket exists
+  ansible.builtin.stat:
+    path: /var/run/containerd/containerd.sock
+  register: containerd_socket
+
+- name: Fail if containerd is not properly configured
+  ansible.builtin.fail:
+    msg: "Containerd is not running or socket not found. Please ensure containerd role is applied first."
+  when: not containerd_socket.stat.exists
+
+# # ===== STEP 5: Create Helper Scripts for Sudo Usage =====
+# - name: Create buildctl-daemonless wrapper for easier usage
+#   ansible.builtin.copy:
+#     content: |
+#       #!/bin/bash
+#       # BuildKit Daemonless Wrapper
+#       # Usage: sudo buildctl-daemonless-wrapper build [options]
+
+#       exec {{ buildkit_install_dir }}/buildctl-daemonless.sh "$@"
+#     dest: "{{ buildkit_install_dir }}/buildctl-daemonless-wrapper"
+#     mode: '0755'
+#     owner: root
+#     group: root
+
+# ===== Cleanup and Verification =====
+- name: Clean up temporary files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ buildkit_tmp_dir }}/buildkit.tar.gz"
+    - "{{ buildkit_tmp_dir }}/buildkit_extract"
+
+- name: Verify BuildKit binaries are executable
+  ansible.builtin.command:
+    cmd: "{{ buildkit_install_dir }}/{{ item }} --help"
+  register: binary_check
+  failed_when: binary_check.rc != 0
+  changed_when: false
+  loop:
+    - buildctl
+    - buildkitd
+
+- name: Test buildctl-daemonless script
+  ansible.builtin.command:
+    cmd: "{{ buildkit_install_dir }}/buildctl-daemonless.sh --help"
+  register: daemonless_check
+  failed_when: false
+  changed_when: false
+
+- name: Display BuildKit Daemonless installation status
+  ansible.builtin.debug:
+    msg: |
+      ✅ BuildKit Daemonless Installation Completed!
+
+      📁 Installed Components:
+      - buildctl: {{ buildkit_install_dir }}/buildctl
+      - buildkitd: {{ buildkit_install_dir }}/buildkitd
+      - buildctl-daemonless.sh: {{ buildkit_install_dir }}/buildctl-daemonless.sh
+      - wrapper: {{ buildkit_install_dir }}/buildctl-daemonless-wrapper
+
+      🚀 Usage Examples:
+      # Build an image:
+      sudo {{ buildkit_install_dir }}/buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=/path/to/context \
+        --local dockerfile=/path/to/context \
+        --output type=image,name=my-image:latest
+
+      # Or use the wrapper:
+      sudo {{ buildkit_install_dir }}/buildctl-daemonless-wrapper build [options]
+
+      ✅ No daemon management required!
+      ✅ Uses existing containerd backend!
+      ✅ Run with sudo to avoid rootless complexity!

@@ -1,0 +1,227 @@
+---
+# ===== Safe APT Lock Management =====
+- name: Wait for apt lock to be released
+  ansible.builtin.wait_for:
+    path: "{{ item }}"
+    state: absent
+    timeout: 30
+  loop:
+    - /var/lib/dpkg/lock-frontend
+    - /var/lib/dpkg/lock
+    - /var/cache/apt/archives/lock
+    - /var/lib/apt/lists/lock
+  ignore_errors: true
+
+- name: Check if dpkg is in inconsistent state
+  ansible.builtin.command: dpkg --audit
+  register: dpkg_audit
+  failed_when: false
+  changed_when: false
+
+- name: Fix dpkg inconsistencies if found
+  ansible.builtin.command: dpkg --configure -a
+  when: dpkg_audit.stdout != ""
+  register: dpkg_configure
+  changed_when: dpkg_configure.rc == 0
+
+
+
+# ===== Copy FirstStage files to target node =====
+- name: Create FirstStage application directory on target node
+  ansible.builtin.file:
+    path: /opt/firststage/app-files
+    state: directory
+    mode: '0755'
+    owner: "{{ file_owner | default('ubuntu') }}"
+    group: "{{ file_group | default('ubuntu') }}"
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+
+
+- name: Copy FirstStage ZIP to target node
+  ansible.builtin.copy:
+    src: "FirstStage.zip"
+    dest: "/tmp/firststage.zip"
+    mode: '0644'
+  register: copy_result 
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+- name: Extract FirstStage application
+  ansible.builtin.unarchive:
+    src: "/tmp/firststage.zip"
+    dest: "/opt/firststage/app-files/"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+- name: Clean up ZIP file
+  ansible.builtin.file:
+    path: "/tmp/firststage.zip"
+    state: absent
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+- name: Verify copy operation succeeded
+  ansible.builtin.fail:
+    msg: "Failed to copy FirstStage files to target node"
+  when: copy_result.failed | default(false)
+
+- name: Verify copied files structure
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    # Core application files
+    - /opt/firststage/app-files/Dockerfile
+    - /opt/firststage/app-files/docker-compose.yml
+    - /opt/firststage/app-files/rabbitmq-app.jar
+    - /opt/firststage/app-files/generate_docker_certs.sh
+    - /opt/firststage/app-files/README.md
+
+    # Source code structure
+    - /opt/firststage/app-files/src/main/resources
+    - /opt/firststage/app-files/src/main/resources/cert
+    - /opt/firststage/app-files/src/main/resources/secret-patterns-db
+
+    # Critical directories that should exist
+    - /opt/firststage/app-files/src
+    - /opt/firststage/app-files/src/main
+  register: file_check
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+- name: Verify all critical files were copied successfully
+  ansible.builtin.fail:
+    msg: "Critical file missing: {{ item.item }}"
+  loop: "{{ file_check.results }}"
+  when: not item.stat.exists
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+
+# ===== Generate TLS Certificates =====
+- name: Set certificate generation variables
+  ansible.builtin.set_fact:
+    server_hostname: "{{ docker_server_hostname | default('docker-host') }}"
+    server_ip: "{{ docker_server_ip | default(hostvars[sast_target_node | default('worker')]['ansible_host']) }}"
+
+- name: Display certificate generation parameters
+  ansible.builtin.debug:
+    msg:
+      - "Server hostname: {{ server_hostname }}"
+      - "Server IP: {{ server_ip }}"
+      - "Target node: {{ firststage_target_node | default('worker') }}"
+
+- name: Make generate_docker_certs.sh executable
+  ansible.builtin.file:
+    path: /opt/firststage/app-files/generate_docker_certs.sh
+    mode: '0755'
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+- name: Check if certificates already exist
+  ansible.builtin.stat:
+    path: "/opt/firststage/app-files/src/main/resources/cert/ca.pem"
+  register: existing_certs
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+- name: Generate TLS certificates for Docker API
+  ansible.builtin.shell: |
+    export SERVER_HOSTNAME="{{ server_hostname }}"
+    export SERVER_IP="{{ server_ip }}"
+    ./generate_docker_certs.sh
+  args:
+    chdir: /opt/firststage/app-files/
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+  register: cert_generation_result
+  when: not existing_certs.stat.exists or force_cert_regeneration | default(false)
+
+- name: Display certificate generation result
+  ansible.builtin.debug:
+    msg: "Certificate generation completed: {{ cert_generation_result.stdout_lines }}"
+  when:
+    - cert_generation_result is defined
+    - cert_generation_result.stdout_lines is defined
+
+- name: Validate generated certificates exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/firststage/app-files/src/main/resources/cert/ca.pem
+    - /opt/firststage/app-files/src/main/resources/cert/cert.pem
+    - /opt/firststage/app-files/src/main/resources/cert/key.pem
+    - /opt/firststage/app-files/server_cert/server-cert.pem
+    - /opt/firststage/app-files/server_cert/server-key.pem
+    - /opt/firststage/app-files/ca.pem
+  register: cert_validation
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+  when: cert_generation_result is defined
+
+- name: Verify certificate generation was successful
+  ansible.builtin.fail:
+    msg: "Certificate file missing: {{ item.item }}"
+  loop: "{{ cert_validation.results }}"
+  when:
+    - cert_validation is defined
+    - not item.stat.exists
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+
+
+# ===== Download Certificates to Control Node =====
+- name: Fetch server certificates to Ansible control node
+  ansible.builtin.fetch:
+    src: "/opt/firststage/app-files/server_cert/{{ item }}"
+    dest: "{{ playbook_dir }}/server_certificates/"
+    flat: yes
+  loop:
+    - server-cert.pem
+    - server-key.pem
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+  register: server_cert_fetch
+
+- name: Fetch CA certificate to Ansible control node
+  ansible.builtin.fetch:
+    src: "/opt/firststage/app-files/ca.pem"
+    dest: "{{ playbook_dir }}/server_certificates/"
+    flat: yes
+  delegate_to: "{{ firststage_target_node | default('worker') }}"
+  register: ca_cert_fetch
+
+- name: Verify certificates were downloaded successfully
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/server_certificates/{{ item }}"
+  loop:
+    - server-cert.pem
+    - server-key.pem
+    - ca.pem
+  register: downloaded_certs
+  delegate_to: localhost
+  become: false
+
+- name: Ensure all certificates were downloaded
+  ansible.builtin.fail:
+    msg: "Certificate not downloaded: {{ item.item }}"
+  loop: "{{ downloaded_certs.results }}"
+  when: not item.stat.exists
+  delegate_to: localhost
+
+- name: Display server certificate download location
+  ansible.builtin.debug:
+    msg:
+      - "Server certificates downloaded to: {{ playbook_dir }}/server_certificates/"
+      - "Files available: server-cert.pem, server-key.pem, ca.pem"
+
+# ===== Mark Preparation Complete =====
+- name: Mark FirstStage preparation as complete
+  ansible.builtin.set_fact:
+    firststage_prep_complete: true
+    firststage_certs_ready: true
+    cacheable: yes
+
+- name: Display preparation completion status
+  ansible.builtin.debug:
+    msg:
+      - "✅ FirstStage preparation phase completed successfully"
+      - "✅ Application files copied to {{ firststage_target_node | default('worker') }}"
+      - "✅ TLS certificates generated and downloaded"
+      - "✅ Ready to proceed with SAST node configuration"
+
+
+

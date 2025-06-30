@@ -1,0 +1,35 @@
+---
+# SAST Role Variables
+# These variables are used in tasks/main.yml
+
+# Docker package information
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Docker repository configuration
+docker_repo_url: "https://download.docker.com/linux/ubuntu"
+docker_gpg_key_url: "https://download.docker.com/linux/ubuntu/gpg"
+docker_gpg_key_id: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+
+# System packages required for Docker
+docker_dependencies:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - software-properties-common
+
+# Certificate file permissions
+cert_file_permissions:
+  ca_cert: "0644"
+  server_cert: "0644"
+  server_key: "0600"
+
+# Docker group configuration
+docker_group: "docker"
+docker_user: "ubuntu"

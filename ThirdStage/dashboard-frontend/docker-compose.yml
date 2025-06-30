@@ -1,0 +1,57 @@
+networks:
+  dashboard-network:
+    driver: bridge
+
+volumes:
+  node_modules:
+  postgres_data:
+
+services:
+  dashboard-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+
+    container_name: dashboard-frontend-app
+
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_HMR_PORT:-24678}:24678"
+
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./index.html:/app/index.html
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.app.json:/app/tsconfig.app.json
+      - ./tsconfig.node.json:/app/tsconfig.node.json
+      - ./tailwind.config.js:/app/tailwind.config.js
+      - ./postcss.config.cjs:/app/postcss.config.cjs
+      - ./eslint.config.js:/app/eslint.config.js
+      - node_modules:/app/node_modules
+
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8080/api}
+      - VITE_APP_TITLE=${VITE_APP_TITLE:-Jenkins Security Dashboard}
+      - VITE_ENABLE_MOCK_DATA=${VITE_ENABLE_MOCK_DATA:-true}
+      - VITE_LOG_LEVEL=${VITE_LOG_LEVEL:-debug}
+      - VITE_PERFORMANCE_MONITORING=${VITE_PERFORMANCE_MONITORING:-true}
+      - CHOKIDAR_USEPOLLING=true
+
+    networks:
+      - dashboard-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+
+
+
+

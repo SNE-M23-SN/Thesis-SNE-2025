@@ -1,0 +1,67 @@
+---
+# LiftOffStage Role Handlers
+
+- name: restart postgres-ci deployment
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: postgres-ci
+        namespace: "{{ ns_liftoffstage }}"
+        annotations:
+          deployment.kubernetes.io/revision: "{{ ansible_date_time.epoch }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+
+- name: restart rabbitmq deployment
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rabbitmq
+        namespace: "{{ ns_liftoffstage }}"
+        annotations:
+          deployment.kubernetes.io/revision: "{{ ansible_date_time.epoch }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+
+- name: restart jenkins-liftoff deployment
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: jenkins-liftoff
+        namespace: "{{ ns_liftoffstage }}"
+        annotations:
+          deployment.kubernetes.io/revision: "{{ ansible_date_time.epoch }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+
+- name: reload liftoffstage services info configmap
+  community.kubernetes.k8s:
+    kubeconfig: /home/ubuntu/.kube/config
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: liftoffstage-services-info
+        namespace: "{{ ns_liftoffstage }}"

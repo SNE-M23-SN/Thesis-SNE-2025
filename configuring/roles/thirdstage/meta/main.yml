@@ -1,0 +1,33 @@
+---
+galaxy_info:
+  author: Khasan Abdurakhmanov
+  description: Ansible role for deploying ThirdStage DevSecOps AI Dashboard frontend
+  company: DevSecOps Platform
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+  galaxy_tags:
+    - kubernetes
+    - docker
+    - react
+    - dashboard
+    - devsecops
+    - frontend
+    - nodejs
+
+#dependencies:
+#  - role: common
+#  - role: containerd
+#  - role: kubernetes
+#
+#  # ThirdStage requires SecondStage API for dashboard data
+#  # Note: SecondStage should be deployed before ThirdStage
+#  - role: secondstage
+#
+collections:
+  - community.kubernetes
+  - community.docker

@@ -1,0 +1,9 @@
+---
+# ThirdStage Application Variables (matching tasks implementation)
+# These variables are used in tasks/main.yml with defaults
+
+# Docker build configuration
+thirdstage_build_context: "/opt/thirdstage/app-files/dashboard-frontend"
+
+# Application paths
+thirdstage_app_path: "/opt/thirdstage/app-files"

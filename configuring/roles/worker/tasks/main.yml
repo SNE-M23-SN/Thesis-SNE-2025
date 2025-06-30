@@ -1,0 +1,13 @@
+---
+- name: Set a hostname for (WORKER)
+  ansible.builtin.hostname:
+    name: "{{ worker_hostname }}" # k8sworker
+
+- name: Copy the join command to server location
+  copy: src=join-command dest=/tmp/join-command.sh mode=0777
+
+- name: Join the node to cluster
+  command: sh /tmp/join-command.sh
+  ignore_errors: yes
+  # args:
+  #   warn: no

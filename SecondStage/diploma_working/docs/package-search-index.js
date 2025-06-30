@@ -1,0 +1,1 @@
+packageSearchIndex = [{"l":"All Packages","u":"allpackages-index.html"},{"l":"com.diploma.inno"},{"l":"com.diploma.inno.component"},{"l":"com.diploma.inno.config"},{"l":"com.diploma.inno.dto"},{"l":"com.diploma.inno.entity"},{"l":"com.diploma.inno.repository"}];updateSearchResults();

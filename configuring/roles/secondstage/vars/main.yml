@@ -1,0 +1,4 @@
+---
+# SecondStage Role Variables (matching tasks/main.yml implementation)
+# Only variables actually used in tasks/main.yml
+

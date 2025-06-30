@@ -1,0 +1,1399 @@
+openapi: 3.0.3
+info:
+  title: CI Anomaly Detector API
+  description: |
+    Comprehensive Jenkins CI/CD monitoring and AI-powered anomaly detection system.
+    
+    This API provides real-time build monitoring, AI analysis results, security anomaly detection,
+    and dashboard analytics for Jenkins CI/CD pipelines. The system integrates with Jenkins REST API
+    and uses PostgreSQL with JSONB storage for AI analysis results.
+    
+    **Key Features:**
+    - Real-time Jenkins build monitoring
+    - AI-powered anomaly detection and analysis
+    - Security vulnerability assessment
+    - Build log analysis and insights
+    - Chart data for dashboard visualizations
+    - Job management and exploration
+    
+    **Data Sources:**
+    - Jenkins REST API integration
+    - PostgreSQL database with JSONB storage
+    - AI analysis results and insights
+    - Materialized views for performance optimization
+  version: 1.0.0
+  contact:
+    name: Khasan Abdurakhmanov
+    email: ya.hasan2001@yandex.ru
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8282/api/dashboard
+    description: Local development server
+  - url: https://ci-anomaly-detector.company.com/api/dashboard
+    description: Production server
+
+tags:
+  - name: Recent Builds
+    description: Recent build information and metrics
+  - name: Security Anomalies
+    description: Security anomaly detection and analysis
+  - name: Active Builds
+    description: Currently active build monitoring
+  - name: Job Counts
+    description: Job activity metrics and statistics
+  - name: Build Details
+    description: Comprehensive build analysis and information
+  - name: AI Insights
+    description: AI-powered analysis and recommendations
+  - name: Chart Data
+    description: Data for dashboard visualizations
+  - name: Job Management
+    description: Job discovery and management operations
+  - name: Build Operations
+    description: Build triggering and control operations
+
+paths:
+  /recentJobBuilds:
+    get:
+      tags:
+        - Recent Builds
+      summary: Get recent builds for all Jenkins jobs
+      description: |
+        Retrieves recent build information across all Jenkins jobs with health status,
+        anomaly indicators, and computed metrics from materialized views.
+        
+        **Database Query:**
+        - Queries `recent_job_builds` materialized view
+        - Orders by raw_timestamp DESC for most recent builds
+        - Includes health status, anomaly counts, and time information
+        
+        **Response Data:**
+        - Job name and build ID
+        - Health status (CRITICAL, WARNING, Healthy, Unhealthy)
+        - Anomaly count and risk indicators
+        - Human-readable timestamps
+      operationId: getAllRecentBuilds
+      responses:
+        '200':
+          description: Successfully retrieved recent builds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecentJobBuildDTO'
+              example:
+                - jobName: "my-web-app"
+                  buildId: 123
+                  healthStatus: "CRITICAL"
+                  anomalyCount: 5
+                  timeAgo: "2 hours ago"
+                  rawTimestamp: "2024-01-15T14:30:45.123Z"
+                  computedAt: "2024-01-15T16:00:00.000Z"
+                  originalJobName: "my-web-app"
+
+  /recentJobBuilds/{jobName}:
+    get:
+      tags:
+        - Recent Builds
+      summary: Get recent builds for specific job
+      description: |
+        Retrieves recent build information for a specific Jenkins job with detailed
+        build history and anomaly tracking.
+        
+        **Use Cases:**
+        - Job-specific build history analysis
+        - Monitoring build trends for particular projects
+        - Detailed anomaly tracking for specific jobs
+      operationId: getRecentBuildsByJobName
+      parameters:
+        - name: jobName
+          in: path
+          required: true
+          description: Name of the Jenkins job to retrieve recent builds for
+          schema:
+            type: string
+          example: "my-web-app"
+      responses:
+        '200':
+          description: Successfully retrieved job-specific recent builds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecentJobBuildDTO'
+
+  /securityAnomalies:
+    get:
+      tags:
+        - Security Anomalies
+      summary: Get total security anomaly count
+      description: |
+        Retrieves security anomaly count for all jobs in the last 7 days.
+        
+        **Security Anomaly Types:**
+        - Authentication vulnerabilities
+        - Authorization bypass attempts
+        - Suspicious patterns in build logs
+        - Code quality security violations
+        - Secret exposure detection
+        
+        **Default Parameters:**
+        - Job Filter: "all" (all jobs)
+        - Time Range: "7 days"
+      operationId: getAllSecurityAnomalies
+      responses:
+        '200':
+          description: Successfully retrieved security anomaly count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityAnomalyCountDTO'
+              example:
+                jobFilter: "all"
+                timeRange: "7 days"
+                anomalyCount: 25
+                computedAt: "2024-01-15T10:30:00+05:00"
+        '404':
+          description: No security anomaly data found
+
+  /securityAnomalies/{jobFilter}:
+    get:
+      tags:
+        - Security Anomalies
+      summary: Get security anomalies by job filter and time range
+      description: |
+        Retrieves security anomaly count filtered by job and time period.
+        
+        **Database Query:**
+        - Queries `security_anomaly_counts` aggregated table
+        - Filters by job_filter and time_range
+        - Returns computed metrics with timestamps
+        
+        **Use Cases:**
+        - Project-specific security analysis
+        - Historical security trend analysis
+        - Comparative security assessment across time periods
+      operationId: getSecurityAnomaliesByJobFilterAndTimeRange
+      parameters:
+        - name: jobFilter
+          in: path
+          required: true
+          description: Job name or 'all' for all jobs
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: timeRange
+          in: query
+          required: true
+          description: Time period to analyze (e.g., '7 days', '30 days', '90 days')
+          schema:
+            type: string
+          example: "30 days"
+      responses:
+        '200':
+          description: Successfully retrieved filtered security anomaly count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityAnomalyCountDTO'
+
+  /activeBuilds:
+    get:
+      tags:
+        - Active Builds
+      summary: Get total active build count
+      description: |
+        Retrieves the total number of currently active builds across all jobs.
+        
+        **Database Query:**
+        - Queries `active_build_counts` aggregated table
+        - Filters by job_filter = "all"
+        - Returns real-time active build metrics
+        
+        **Use Cases:**
+        - System load monitoring
+        - Resource utilization tracking
+        - Build queue analysis
+      operationId: getAllActiveBuilds
+      responses:
+        '200':
+          description: Successfully retrieved active build count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveBuildCountDTO'
+              example:
+                jobFilter: "all"
+                activeBuilds: 12
+                computedAt: "2024-01-15T10:30:00+05:00"
+        '404':
+          description: No active build data found
+
+  /activeBuilds/{jobFilter}:
+    get:
+      tags:
+        - Active Builds
+      summary: Get active builds by job filter
+      description: |
+        Retrieves active build count filtered by specific job or pattern.
+        
+        **Filter Options:**
+        - Specific job name: Count active builds for single job
+        - "all": Count active builds across all jobs
+        - Pattern matching: May support wildcards (implementation dependent)
+        
+        **Parameter Validation:**
+        - Null/empty jobFilter returns DTO with "error" filter and 0 count
+        - Invalid filters handled gracefully
+      operationId: getActiveBuildsByJobFilter
+      parameters:
+        - name: jobFilter
+          in: path
+          required: true
+          description: Job name, pattern, or 'all' for all jobs
+          schema:
+            type: string
+          example: "my-web-app"
+      responses:
+        '200':
+          description: Successfully retrieved filtered active build count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveBuildCountDTO'
+        '404':
+          description: No active build data found for filter
+
+  /totalJobs/{timeBoundary}:
+    get:
+      tags:
+        - Job Counts
+      summary: Get total job count by time boundary
+      description: |
+        Retrieves the total number of Jenkins jobs within specified time period.
+        
+        **Database Query:**
+        - Queries `job_counts` aggregated table
+        - Filters by time_boundary for specific period
+        - Returns JobCountProjection mapped to DTO
+        
+        **Supported Time Boundaries:**
+        - "today": Jobs active in the last 24 hours
+        - "week": Jobs active in the last 7 days
+        - "month": Jobs active in the last 30 days
+        
+        **Use Cases:**
+        - Infrastructure utilization analysis
+        - Growth tracking and capacity planning
+        - Executive reporting on CI/CD adoption
+      operationId: getTotalJobs
+      parameters:
+        - name: timeBoundary
+          in: path
+          required: true
+          description: Time period to analyze job activity
+          schema:
+            type: string
+            enum: ["today", "week", "month"]
+          example: "week"
+      responses:
+        '200':
+          description: Successfully retrieved job count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCountDTO'
+              example:
+                timeBoundary: "week"
+                totalJobs: 45
+                computedAt: "2024-01-15T10:30:00+05:00"
+        '404':
+          description: No job count data found for time boundary
+
+  /builds/{jobName}/{buildId}:
+    get:
+      tags:
+        - Build Details
+      summary: Get comprehensive build summary
+      description: |
+        Retrieves AI-generated build analysis including health status, anomalies, and insights.
+
+        **Database Query:**
+        - Queries `chat_messages` table for AI analysis results
+        - Filters by conversation_id (jobName) and build_number (buildId)
+        - Extracts JSONB content for build summary and health status
+
+        **JSONB Content Structure:**
+        - Build metadata and timing information
+        - Anomaly detection results with severity levels
+        - Performance regression analysis
+        - Security vulnerability assessments
+        - Human-readable build summary
+
+        **Response Scenarios:**
+        - AI data available: Returns comprehensive build analysis
+        - No AI data: Returns message indicating AI not yet triggered
+      operationId: getBuildSummary
+      parameters:
+        - name: jobName
+          in: path
+          required: true
+          description: Name of the Jenkins job
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildId
+          in: path
+          required: true
+          description: Build number to retrieve summary for
+          schema:
+            type: integer
+          example: 123
+      responses:
+        '200':
+          description: Successfully retrieved build summary
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BuildSummaryResponse'
+                  - $ref: '#/components/schemas/NoAiDataResponse'
+              examples:
+                withAiData:
+                  summary: Build with AI analysis data
+                  value:
+                    hasAiData: true
+                    data:
+                      jobName: "my-web-app"
+                      buildId: 123
+                      healthStatus: "CRITICAL"
+                      buildSummary: "Build completed with security concerns"
+                      buildStartedTime: "Today, 2:30 PM"
+                      buildDuration: "2m 30s"
+                      regressionDetected: true
+                noAiData:
+                  summary: Build without AI analysis data
+                  value:
+                    hasAiData: false
+                    message: "AI has not yet been triggered for conversationId: my-web-app, buildNumber: 123"
+
+  /builds/{conversationId}/{buildNumber}/risk-score:
+    get:
+      tags:
+        - Build Details
+      summary: Get AI-calculated risk score
+      description: |
+        Retrieves risk assessment information for a specific build.
+
+        **Database Query:**
+        - Queries `chat_messages` table for AI risk analysis
+        - Extracts JSONB content->'riskScore' object
+        - Parses risk score, change, level, and previous score
+
+        **Risk Score Data:**
+        - score: Numerical risk rating (typically 0-100)
+        - change: Change from previous build
+        - riskLevel: Categorical risk assessment (LOW, MEDIUM, HIGH, CRITICAL)
+        - previousScore: Previous build's risk score for comparison
+
+        **Use Cases:**
+        - Risk-based build approval workflows
+        - Trend analysis and risk monitoring
+        - Alert systems for high-risk builds
+      operationId: getRiskScore
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Jenkins job name (conversation identifier)
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildNumber
+          in: path
+          required: true
+          description: Specific build number to get risk score for
+          schema:
+            type: integer
+          example: 123
+      responses:
+        '200':
+          description: Successfully retrieved risk score
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskScoreResponse'
+              example:
+                hasData: true
+                data:
+                  score: 75
+                  change: 15
+                  riskLevel: "HIGH"
+                  previousScore: 60
+
+  /builds/{jobName}/{buildId}/logs-tracker:
+    get:
+      tags:
+        - Build Details
+      summary: Get log collection progress
+      description: |
+        Retrieves real-time progress of build log collection.
+
+        **Log Collection System:**
+        - Expected chunks: 14 (standard log chunking)
+        - Real-time tracking of received vs expected chunks
+        - Status indicators: "Complete" or "In Progress"
+
+        **Use Cases:**
+        - Real-time log collection monitoring
+        - Progress indicators for frontend polling
+        - Debugging log collection issues
+      operationId: getLogsTracker
+      parameters:
+        - name: jobName
+          in: path
+          required: true
+          description: Name of the Jenkins job
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildId
+          in: path
+          required: true
+          description: Build number to track logs for
+          schema:
+            type: integer
+          example: 123
+      responses:
+        '200':
+          description: Successfully retrieved log tracking info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogsTrackerResponse'
+              example:
+                received: 12
+                expected: 14
+                status: "In Progress"
+
+  /builds/{jobName}/{buildId}/logs:
+    get:
+      tags:
+        - Build Details
+      summary: Get paginated build logs
+      description: |
+        Retrieves build logs with pagination support and JSON parsing.
+
+        **Database Query:**
+        - Queries `chat_messages` table for USER messages (build logs)
+        - Filters by conversation_id and build_number
+        - Applies pagination with LIMIT and OFFSET
+        - Excludes instruction messages for clean log output
+
+        **Performance Characteristics:**
+        - Efficient pagination for large log datasets
+        - JSON processing with error handling
+        - Optimized for real-time log viewing
+      operationId: getAllLogs
+      parameters:
+        - name: jobName
+          in: path
+          required: true
+          description: Name of the Jenkins job
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildId
+          in: path
+          required: true
+          description: Build number to retrieve logs for
+          schema:
+            type: integer
+          example: 123
+        - name: page
+          in: query
+          description: Page number for pagination (0-based)
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+          example: 0
+        - name: size
+          in: query
+          description: Number of log entries per page
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+          example: 100
+      responses:
+        '200':
+          description: Successfully retrieved paginated logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LogEntry'
+              example:
+                - type: "build_log_data"
+                  log_chunk: "Started by user admin\nRunning as SYSTEM..."
+                  chunk_index: 1
+                  total_chunks: 14
+
+  /builds/{jobName}/{buildId}/detected-anomalies:
+    get:
+      tags:
+        - Build Details
+      summary: Get paginated anomalies
+      description: |
+        Retrieves detected anomalies with pagination support.
+
+        **Database Query:**
+        - Uses complex CTE with CROSS JOIN LATERAL to unnest JSONB anomalies array
+        - Filters by message_type = 'ASSISTANT' and build identifiers
+        - Applies pagination with LIMIT and OFFSET
+        - Counts total anomalies for pagination metadata
+
+        **Anomaly Data Structure:**
+        - Severity levels (CRITICAL, HIGH, MEDIUM, LOW)
+        - Anomaly types (security, performance, quality)
+        - AI analysis and recommendations
+        - Detailed descriptions and context
+      operationId: getDetectedAnomalies
+      parameters:
+        - name: jobName
+          in: path
+          required: true
+          description: Name of the Jenkins job
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildId
+          in: path
+          required: true
+          description: Build number to retrieve anomalies for
+          schema:
+            type: integer
+          example: 123
+        - name: page
+          in: query
+          description: Page number for pagination (1-based)
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+          example: 1
+        - name: size
+          in: query
+          description: Number of anomalies per page
+          schema:
+            type: integer
+            default: 3
+            minimum: 1
+            maximum: 50
+          example: 3
+      responses:
+        '200':
+          description: Successfully retrieved paginated anomalies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAnomaliesResponse'
+              example:
+                anomalies:
+                  - severity: "CRITICAL"
+                    type: "security"
+                    description: "Potential API key exposure"
+                    details: "API key found in build logs"
+                    aiAnalysis: "AI detected potential security vulnerability"
+                    recommendation: "Remove API key from logs and use environment variables"
+                total_count: 25
+
+  /builds/{jobName}/{buildId}/rerun:
+    post:
+      tags:
+        - Build Operations
+      summary: Trigger new build
+      description: |
+        Triggers a new build for the specified Jenkins job.
+
+        **Jenkins API Integration Process:**
+        1. Calls JenkinsService.rerunBuild() with job name and build ID
+        2. Uses jenkins-rest library to make API call to Jenkins server
+        3. Executes jenkinsClient.api().jobsApi().build("", jobName)
+        4. Queues new build with current job configuration
+        5. Returns confirmation message with job name
+
+        **Build Trigger Process:**
+        1. Validation: Checks if job exists and is accessible
+        2. Permission Check: Verifies Jenkins user has build permissions
+        3. Queue Submission: Submits build request to Jenkins queue
+        4. Response Generation: Returns confirmation message
+
+        **Security Considerations:**
+        - Requires appropriate Jenkins permissions
+        - Build parameters use current job configuration
+        - Audit logging for build trigger events
+      operationId: rerunBuild
+      parameters:
+        - name: jobName
+          in: path
+          required: true
+          description: Name of the Jenkins job to trigger
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildId
+          in: path
+          required: true
+          description: Build ID for reference (new build gets next available number)
+          schema:
+            type: integer
+          example: 123
+      responses:
+        '200':
+          description: Build successfully triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildTriggerResponse'
+              example:
+                message: "New build triggered for my-web-app"
+        '400':
+          description: Invalid job name or build parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid job name"
+                message: "Job name cannot be empty"
+        '403':
+          description: Insufficient permissions to trigger build
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Permission denied"
+                message: "User does not have build permissions for this job"
+        '404':
+          description: Jenkins job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Job not found"
+                message: "Jenkins job 'my-web-app' does not exist"
+        '500':
+          description: Jenkins server error or unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Jenkins server error"
+                message: "Unable to connect to Jenkins server"
+
+  /builds/{conversationId}/{buildNumber}/ai-insights:
+    get:
+      tags:
+        - AI Insights
+      summary: Get AI insights for specific build
+      description: |
+        Retrieves comprehensive AI-generated insights for a specific build.
+
+        **Database Query:**
+        - Queries `chat_messages` table for ASSISTANT messages
+        - Extracts JSONB content for AI insights and analysis
+        - Parses structured AI recommendations and trends
+
+        **AI Insight Categories:**
+        - Build summary and analysis
+        - Performance recommendations
+        - Security assessments
+        - Quality improvements
+        - Trend analysis and patterns
+      operationId: getAiInsights
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Jenkins job name (conversation identifier)
+          schema:
+            type: string
+          example: "my-web-app"
+        - name: buildNumber
+          in: path
+          required: true
+          description: Specific build number to get insights for
+          schema:
+            type: integer
+          example: 123
+      responses:
+        '200':
+          description: Successfully retrieved AI insights
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiInsightsResponse'
+              example:
+                summary: "Build completed with security concerns"
+                recommendations:
+                  - "Fix security vulnerability in authentication module"
+                  - "Optimize database query performance"
+                trends:
+                  pattern: "deteriorating"
+                  direction: "negative"
+
+  /builds/{conversationId}/ai-insights:
+    get:
+      tags:
+        - AI Insights
+      summary: Get AI insights for job (latest)
+      description: |
+        Retrieves latest AI insights for a job across all builds.
+
+        **Database Query:**
+        - Queries latest AI analysis results for the job
+        - Aggregates insights across recent builds
+        - Provides job-level trends and recommendations
+
+        **Use Cases:**
+        - Job-level health assessment
+        - Long-term trend analysis
+        - Project-wide recommendations
+      operationId: getAiInsightsByConversation
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Jenkins job name (conversation identifier)
+          schema:
+            type: string
+          example: "my-web-app"
+      responses:
+        '200':
+          description: Successfully retrieved latest AI insights for job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiInsightsResponse'
+
+  /anomaly-trend:
+    get:
+      tags:
+        - Chart Data
+      summary: Get anomaly trend chart data
+      description: |
+        Retrieves Chart.js compatible data for anomaly trend visualization.
+
+        **Database Query:**
+        - Queries `build_anomaly_summary` materialized view
+        - Aggregates anomaly counts by build and job
+        - Formats data for Chart.js line/bar charts
+
+        **Chart Data Structure:**
+        - labels: Build identifiers for X-axis
+        - datasets: Anomaly count data series
+        - Chart.js compatible formatting
+
+        **Use Cases:**
+        - Dashboard trend visualizations
+        - Anomaly pattern analysis
+        - Historical trend monitoring
+      operationId: getAnomalyTrend
+      parameters:
+        - name: jobFilter
+          in: query
+          description: Job name or 'all' for all jobs
+          schema:
+            type: string
+            default: "all"
+          example: "my-web-app"
+        - name: buildCount
+          in: query
+          description: Number of recent builds to include
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 15
+          example: 10
+      responses:
+        '200':
+          description: Successfully retrieved anomaly trend data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartDataDTO'
+              example:
+                labels: ["my-web-app - Build №123", "my-api - Build №456"]
+                datasets:
+                  - label: "Anomaly Count"
+                    data: [5, 12]
+                    backgroundColor: "#36A2EB"
+                    borderColor: "#36A2EB"
+
+  /severity-distribution:
+    get:
+      tags:
+        - Chart Data
+      summary: Get severity distribution chart data
+      description: |
+        Retrieves Chart.js compatible data for anomaly severity distribution.
+
+        **Database Query:**
+        - Queries anomaly data with severity classification
+        - Groups by severity levels (CRITICAL, HIGH, MEDIUM, LOW)
+        - Formats data for stacked bar charts or pie charts
+
+        **Severity Levels:**
+        - CRITICAL: Immediate attention required
+        - HIGH: Important issues to address
+        - MEDIUM: Moderate concerns
+        - LOW: Minor issues or suggestions
+
+        **Chart Configuration:**
+        - Multiple datasets for each severity level
+        - Color-coded visualization
+        - Stacked or grouped chart support
+      operationId: getSeverityDistribution
+      parameters:
+        - name: jobFilter
+          in: query
+          description: Job name or 'all' for all jobs
+          schema:
+            type: string
+            default: "all"
+          example: "all"
+        - name: buildCount
+          in: query
+          description: Number of recent builds to analyze
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 15
+          example: 7
+      responses:
+        '200':
+          description: Successfully retrieved severity distribution data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartDataDTO'
+              example:
+                labels: ["Build №123", "Build №124"]
+                datasets:
+                  - label: "CRITICAL"
+                    data: [2, 1]
+                    backgroundColor: "#FF6384"
+                  - label: "HIGH"
+                    data: [3, 2]
+                    backgroundColor: "#FF9F40"
+                  - label: "MEDIUM"
+                    data: [1, 4]
+                    backgroundColor: "#FFCD56"
+
+  /jobs:
+    get:
+      tags:
+        - Job Management
+      summary: Get all job names
+      description: |
+        Retrieves list of all Jenkins job names for dropdowns and selection.
+
+        **Database Query:**
+        - Queries `chat_messages` table for DISTINCT job names
+        - Filters out null or empty job names
+        - Orders alphabetically for consistent UI presentation
+
+        **Response Format:**
+        - Simple array of job name strings
+        - Alphabetically sorted
+        - Non-null values only
+
+        **Use Cases:**
+        - Populating job selection dropdowns
+        - System administration and job management
+        - Automated job discovery and monitoring setup
+      operationId: getJobNames
+      responses:
+        '200':
+          description: Successfully retrieved job names
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+              example: ["backend-service", "data-pipeline", "mobile-app", "my-web-app"]
+
+  /job-explorer:
+    get:
+      tags:
+        - Job Management
+      summary: Get jobs filtered by status
+      description: |
+        Retrieves comprehensive job information filtered by status for job explorer interface.
+
+        **Database Query:**
+        - Uses complex CTE to get latest build status per job
+        - Filters by status using CASE WHEN logic
+        - Joins with Jenkins API data for real-time information
+
+        **Status Filters:**
+        - "all": All jobs regardless of status
+        - "success": Jobs with successful latest builds
+        - "failure": Jobs with failed latest builds
+        - "unstable": Jobs with unstable builds
+        - "aborted": Jobs with aborted builds
+
+        **Response Data:**
+        - Comprehensive job metadata
+        - Latest build status and health indicators
+        - Build history and trend information
+
+        **Use Cases:**
+        - Job management and administration interfaces
+        - System health monitoring and overview
+        - Troubleshooting and issue identification
+      operationId: getJobs
+      parameters:
+        - name: tab
+          in: query
+          required: false
+          description: Status filter to apply (defaults to "all")
+          schema:
+            type: string
+            enum: ["all", "success", "failure", "unstable", "aborted"]
+            default: "all"
+          example: "failure"
+      responses:
+        '200':
+          description: Successfully retrieved filtered job information
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobExplorerItem'
+              example:
+                - jobName: "my-web-app"
+                  latestBuildId: 123
+                  status: "FAILURE"
+                  healthStatus: "CRITICAL"
+                  lastBuildTime: "2024-01-15T14:30:45.123Z"
+                  anomalyCount: 5
+
+components:
+  schemas:
+    RecentJobBuildDTO:
+      type: object
+      description: Recent build information with health status and anomaly indicators
+      properties:
+        jobName:
+          type: string
+          description: Display name of the Jenkins job
+          example: "my-web-app"
+        buildId:
+          type: integer
+          description: Jenkins build number
+          example: 123
+        healthStatus:
+          type: string
+          enum: ["CRITICAL", "WARNING", "Healthy", "Unhealthy"]
+          description: AI-calculated health status
+          example: "CRITICAL"
+        anomalyCount:
+          type: integer
+          description: Total number of anomalies detected
+          example: 5
+        timeAgo:
+          type: string
+          description: Human-readable relative time
+          example: "2 hours ago"
+        rawTimestamp:
+          type: string
+          format: date-time
+          description: Exact timestamp when build was executed
+          example: "2024-01-15T14:30:45.123Z"
+        computedAt:
+          type: string
+          format: date-time
+          description: Timestamp when materialized view data was computed
+          example: "2024-01-15T16:00:00.000Z"
+        originalJobName:
+          type: string
+          description: Original Jenkins job name without processing
+          example: "my-web-app"
+
+    SecurityAnomalyCountDTO:
+      type: object
+      description: Security anomaly count with filtering and timing information
+      properties:
+        jobFilter:
+          type: string
+          description: Job filter that was applied
+          example: "my-web-app"
+        timeRange:
+          type: string
+          description: Time period analyzed
+          example: "30 days"
+        anomalyCount:
+          type: integer
+          description: Number of security anomalies detected
+          example: 25
+        computedAt:
+          type: string
+          format: date-time
+          description: Timestamp when count was calculated
+          example: "2024-01-15T10:30:00+05:00"
+
+    ActiveBuildCountDTO:
+      type: object
+      description: Active build count with filtering information
+      properties:
+        jobFilter:
+          type: string
+          description: Job filter that was applied
+          example: "all"
+        activeBuilds:
+          type: integer
+          description: Number of currently active builds
+          example: 12
+        computedAt:
+          type: string
+          format: date-time
+          description: Timestamp when count was calculated
+          example: "2024-01-15T10:30:00+05:00"
+
+    JobCountDTO:
+      type: object
+      description: Job count within specified time boundary
+      properties:
+        timeBoundary:
+          type: string
+          description: Time period analyzed
+          example: "week"
+        totalJobs:
+          type: integer
+          description: Total number of jobs in time period
+          example: 45
+        computedAt:
+          type: string
+          format: date-time
+          description: Timestamp when count was calculated
+          example: "2024-01-15T10:30:00+05:00"
+
+    BuildSummaryResponse:
+      type: object
+      description: Response containing build summary with AI data
+      properties:
+        hasAiData:
+          type: boolean
+          description: Indicates if AI analysis data is available
+          example: true
+        data:
+          $ref: '#/components/schemas/BuildSummaryDTO'
+
+    BuildSummaryDTO:
+      type: object
+      description: Comprehensive build summary with AI analysis
+      properties:
+        jobName:
+          type: string
+          description: Name of the Jenkins job
+          example: "my-web-app"
+        buildId:
+          type: integer
+          description: Build number
+          example: 123
+        healthStatus:
+          type: string
+          enum: ["CRITICAL", "WARNING", "Healthy", "Unhealthy"]
+          description: AI-calculated health status
+          example: "CRITICAL"
+        buildSummary:
+          type: string
+          description: Human-readable build summary
+          example: "Build completed with security concerns"
+        buildStartedTime:
+          type: string
+          description: Human-readable build start time
+          example: "Today, 2:30 PM"
+        buildDuration:
+          type: string
+          description: Build execution duration
+          example: "2m 30s"
+        regressionDetected:
+          type: boolean
+          description: Whether performance regression was detected
+          example: true
+
+    NoAiDataResponse:
+      type: object
+      description: Response when no AI analysis data is available
+      properties:
+        hasAiData:
+          type: boolean
+          description: Indicates no AI data available
+          example: false
+        message:
+          type: string
+          description: Explanation message
+          example: "AI has not yet been triggered for conversationId: my-web-app, buildNumber: 123"
+
+    RiskScoreResponse:
+      type: object
+      description: Response containing risk score assessment
+      properties:
+        hasData:
+          type: boolean
+          description: Indicates if risk score data is available
+          example: true
+        data:
+          $ref: '#/components/schemas/RiskScoreDTO'
+
+    RiskScoreDTO:
+      type: object
+      description: AI-calculated risk score information
+      properties:
+        score:
+          type: number
+          description: Numerical risk rating (0-100)
+          example: 75
+        change:
+          type: number
+          description: Change from previous build
+          example: 15
+        riskLevel:
+          type: string
+          enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+          description: Categorical risk assessment
+          example: "HIGH"
+        previousScore:
+          type: number
+          description: Previous build's risk score
+          example: 60
+
+    LogsTrackerResponse:
+      type: object
+      description: Log collection progress tracking information
+      properties:
+        received:
+          type: integer
+          description: Number of log chunks received
+          example: 12
+        expected:
+          type: integer
+          description: Expected number of log chunks (typically 14)
+          example: 14
+        status:
+          type: string
+          enum: ["Complete", "In Progress"]
+          description: Current collection status
+          example: "In Progress"
+
+    LogEntry:
+      type: object
+      description: Individual build log entry
+      properties:
+        type:
+          type: string
+          description: Type of log entry
+          example: "build_log_data"
+        log_chunk:
+          type: string
+          description: Actual log content
+          example: "Started by user admin\nRunning as SYSTEM..."
+        chunk_index:
+          type: integer
+          description: Index of this chunk in the sequence
+          example: 1
+        total_chunks:
+          type: integer
+          description: Total number of chunks for this build
+          example: 14
+
+    PaginatedAnomaliesResponse:
+      type: object
+      description: Paginated anomaly detection results
+      properties:
+        anomalies:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnomalyDTO'
+          description: Array of detected anomalies
+        total_count:
+          type: integer
+          description: Total number of anomalies across all pages
+          example: 25
+
+    AnomalyDTO:
+      type: object
+      description: Individual anomaly detected by AI analysis
+      properties:
+        severity:
+          type: string
+          enum: ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+          description: Severity level of the anomaly
+          example: "CRITICAL"
+        type:
+          type: string
+          description: Category of anomaly
+          example: "security"
+        description:
+          type: string
+          description: Brief description of the anomaly
+          example: "Potential API key exposure"
+        details:
+          type: string
+          description: Detailed information about the anomaly
+          example: "API key found in build logs"
+        aiAnalysis:
+          type: string
+          description: AI-generated analysis
+          example: "AI detected potential security vulnerability"
+        recommendation:
+          type: string
+          description: Recommended action to address the anomaly
+          example: "Remove API key from logs and use environment variables"
+
+    BuildTriggerResponse:
+      type: object
+      description: Response from build trigger operation
+      properties:
+        message:
+          type: string
+          description: Confirmation message
+          example: "New build triggered for my-web-app"
+
+    AiInsightsResponse:
+      type: object
+      description: AI-generated insights and analysis
+      properties:
+        summary:
+          type: string
+          description: Overall build summary
+          example: "Build completed with security concerns"
+        recommendations:
+          type: array
+          items:
+            type: string
+          description: AI-generated recommendations
+          example: ["Fix security vulnerability", "Optimize performance"]
+        trends:
+          type: object
+          description: Trend analysis information
+          properties:
+            pattern:
+              type: string
+              description: Detected pattern
+              example: "deteriorating"
+            direction:
+              type: string
+              description: Trend direction
+              example: "negative"
+
+    ChartDataDTO:
+      type: object
+      description: Chart.js compatible data structure
+      properties:
+        labels:
+          type: array
+          items:
+            type: string
+          description: Chart labels for X-axis
+          example: ["Build №123", "Build №124"]
+        datasets:
+          type: array
+          items:
+            $ref: '#/components/schemas/DatasetDTO'
+          description: Chart datasets
+
+    DatasetDTO:
+      type: object
+      description: Individual chart dataset
+      properties:
+        label:
+          type: string
+          description: Dataset label
+          example: "Anomaly Count"
+        data:
+          type: array
+          items:
+            type: number
+          description: Data points for the dataset
+          example: [5, 12, 3]
+        backgroundColor:
+          type: string
+          description: Background color for chart elements
+          example: "#36A2EB"
+        borderColor:
+          type: string
+          description: Border color for chart elements
+          example: "#36A2EB"
+
+    JobExplorerItem:
+      type: object
+      description: Job information for explorer interface
+      properties:
+        jobName:
+          type: string
+          description: Name of the Jenkins job
+          example: "my-web-app"
+        latestBuildId:
+          type: integer
+          description: Latest build number
+          example: 123
+        status:
+          type: string
+          description: Latest build status
+          example: "FAILURE"
+        healthStatus:
+          type: string
+          enum: ["CRITICAL", "WARNING", "Healthy", "Unhealthy"]
+          description: Overall job health status
+          example: "CRITICAL"
+        lastBuildTime:
+          type: string
+          format: date-time
+          description: Timestamp of last build
+          example: "2024-01-15T14:30:45.123Z"
+        anomalyCount:
+          type: integer
+          description: Number of anomalies in latest build
+          example: 5
+
+    ErrorResponse:
+      type: object
+      description: Standard error response format
+      properties:
+        error:
+          type: string
+          description: Error type or category
+          example: "Permission denied"
+        message:
+          type: string
+          description: Detailed error message
+          example: "User does not have build permissions for this job"
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for API authentication
+
+security:
+  - BearerAuth: []

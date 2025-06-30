@@ -1,0 +1,42 @@
+---
+galaxy_info:
+  author: Khasan Abdurakhmanov
+  description: Ansible role for deploying FirstStage Secret Detection & CI/CD Integration Platform
+  company: DevSecOps Platform
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+  galaxy_tags:
+    - kubernetes
+    - docker
+    - secret-detection
+    - devsecops
+    - spring-boot
+    - java
+    - jenkins
+    - rabbitmq
+    - postgresql
+    - security
+    - cicd
+    - integration
+
+#dependencies:
+  # Core infrastructure dependencies
+#  - role: common
+#  - role: containerd
+#  - role: kubernetes
+#  - role: firststage-prep
+
+  # FirstStage requires LiftOffStage services (RabbitMQ, Jenkins)
+  # Note: LiftOffStage should be deployed before FirstStage
+#  - role: liftoffstage
+
+collections:
+  - community.kubernetes
+  - kubernetes.core
+  - community.docker
+

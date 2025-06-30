@@ -1,0 +1,9 @@
+- name: Restart auditd
+ systemd:
+   name: auditd
+   state: restarted
+   daemon_reload: yes
+   
+- name: Reload audit rules
+ command: auditctl -R /etc/audit/rules.d/*
+ changed_when: true

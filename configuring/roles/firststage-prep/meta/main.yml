@@ -1,0 +1,27 @@
+---
+# FirstStage Preparation Role Metadata
+
+galaxy_info:
+  author: "Khasan Abdurakhmanov"
+  description: "Prepares FirstStage application files and generates TLS certificates for Docker API access"
+  company: "Innopolis University"
+  license: "MIT"
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - "20.04"
+        - "22.04"
+        - "24.04"
+
+  galaxy_tags:
+    - kubernetes
+    - docker
+    - certificates
+    - tls
+    - security
+    - preparation
+
+#dependencies: []
+

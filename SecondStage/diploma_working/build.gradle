@@ -1,0 +1,59 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.3.0'
+	id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.diploma.inno'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+	maven { url 'https://repo.spring.io/milestone' }
+}
+
+dependencies {
+	implementation platform("org.springframework.ai:spring-ai-bom:1.0.0-M7")
+//	implementation 'org.springframework.ai:spring-ai-starter-model-
+	implementation 'org.springframework.ai:spring-ai-starter-model-openai'
+//	implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
+	implementation 'org.springframework.ai:spring-ai-client-chat'
+	implementation 'org.springframework.ai:spring-ai-advisors-vector-store'
+
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+//	implementation 'org.springframework.ai:spring-ai-starter-model-chat-memory-jdbc'
+	implementation 'org.springframework.boot:spring-boot-starter-amqp'
+
+	implementation 'io.github.cdancy:jenkins-rest:1.0.2'
+	implementation 'com.google.inject:guice:5.1.0'
+	implementation 'com.google.code.gson:gson:2.8.9'
+
+	implementation 'org.postgresql:postgresql'
+	implementation 'jakarta.persistence:jakarta.persistence-api:3.1.0'
+
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+	implementation 'org.slf4j:slf4j-api'
+	implementation 'ch.qos.logback:logback-classic'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+tasks.named('bootJar') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

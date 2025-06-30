@@ -1,0 +1,58 @@
+---
+# FirstStage Application Configuration
+ns_firststage: "firststage"
+firststage_image_repo: "docker.io/khasanabdurakhmanov/innopolis"
+firststage_image_name: "firststage"  # Used in Docker build and deployment
+firststage_image_tag: "latest"             # Used in Docker build and deployment
+
+# Installation directories
+buildkit_install_dir: "/usr/local/bin"
+
+
+# Resource Configuration for FirstStage Application
+firststage_memory_request: "2Gi"
+firststage_memory_limit: "3Gi"
+firststage_cpu_request: "1000m"      # 1 CPU core
+firststage_cpu_limit: "2000m"        # 2 CPU cores
+
+# PostgreSQL Resource Configuration (if you want to make it configurable too)
+postgres_memory_request: "1Gi"
+postgres_memory_limit: "2Gi"
+postgres_cpu_request: "500m"        # 0.5 CPU core
+postgres_cpu_limit: "1000m"         # 1 CPU core
+
+# RabbitMQ Configuration (using LiftOffStage RabbitMQ service)
+# Internal Kubernetes service address (preferred for cluster communication)
+rabbitmq_hostname: "rabbitmq.liftoffstage.svc.cluster.local"
+rabbitmq_port: "5672"
+rabbitmq_username: "liftoffstage"
+rabbitmq_password: "liftoffstage123"
+
+# Alternative: External NodePort access (for external connections)
+# rabbitmq_hostname: "{{ hostvars['worker'].ansible_host }}"
+# rabbitmq_port: "32011"  # NodePort for AMQP
+
+# Jenkins Configuration (using LiftOffStage Jenkins service)
+# Internal Kubernetes service address (preferred for cluster communication)
+jenkins_url: "http://jenkins-liftoff.liftoffstage.svc.cluster.local:8080"
+jenkins_username: "admin"
+jenkins_password: "admin123"
+
+# Alternative: External NodePort access (for external connections)
+# jenkins_url: "http://{{ hostvars['worker'].ansible_host }}:32013"
+
+# PostgreSQL Configuration for FirstStage
+postgres_user: "postgres"
+postgres_password: "postgres"
+postgres_db: "postgres"
+
+# Docker Host Configuration (as per original .env)
+sast_target_node: "sast"
+docker_host: "tcp://{{ hostvars[sast_target_node | default('worker')].ansible_host }}:2376"
+
+# Application Configuration
+# app_port: 8080 (containerPort and port)
+# nodeport: 32015 (configurable via firststage_app_nodeport)
+
+# Target Node Configuration
+firststage_target_node: "worker"

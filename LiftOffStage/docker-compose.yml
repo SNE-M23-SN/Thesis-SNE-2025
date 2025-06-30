@@ -1,0 +1,73 @@
+# Specifies the version of the Docker Compose file format.
+version: '3.8'
+
+# Defines the services (containers) for external services.
+services:
+  # Service name: 'jenkins' - This is the Jenkins CI/CD server container.
+  jenkins:
+    # Uses the latest official Jenkins image from Docker Hub.
+    image: jenkins/jenkins:jdk21
+
+    ports:
+      - "${JENKINS_WEB_PORT}:8080"
+      - "${JENKINS_AGENT_PORT}:50000"
+    environment:
+      - JAVA_OPTS=${JENKINS_JAVA_OPTS}
+      - JENKINS_URL=${JENKINS_URL}
+      - JENKINS_ADMIN_USER=${JENKINS_ADMIN_USER}
+      - JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD}
+
+    # Persists Jenkins data and mounts initialization scripts.
+    volumes:
+      - jenkins-home:/var/jenkins_home                  # Maps the volume 'jenkins-home' to Jenkins' home directory for persistence.
+      - ./jenkins/init.groovy.d:/var/jenkins_home/init.groovy.d  # Mounts local directory for custom Groovy initialization scripts.
+
+
+
+  # Service name: 'rabbitmq' - This is the RabbitMQ message broker container.
+  rabbitmq:
+    # Uses the official RabbitMQ image with the management UI enabled, based on Alpine Linux for a smaller footprint.
+    image: rabbitmq:management-alpine
+
+    ports:
+      - "${RABBITMQ_AMQP_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT}:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+
+  # Service name: 'postgres_ci' - Custom PostgreSQL with pg_cron for SecondStage chat memory
+  postgres_ci:
+    # Build custom PostgreSQL image with pg_cron extension
+    build:
+      context: ./postgres_ci
+      dockerfile: Dockerfile
+
+    ports:
+      - "${POSTGRES_CI_PORT}:5432"
+
+    environment:
+      - POSTGRES_DB=${POSTGRES_CI_DB}
+      - POSTGRES_USER=${POSTGRES_CI_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_CI_PASSWORD}
+
+    volumes:
+      - postgres_ci_data:/var/lib/postgresql/data
+
+    # Health check to ensure PostgreSQL is ready
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_CI_USER} -d ${POSTGRES_CI_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+
+
+# Defines named volumes for persistent data storage.
+volumes:
+  # Volume name: 'jenkins-home' - Stores Jenkins configuration and job data between container restarts.
+  jenkins-home:
+
+  # Volume name: 'postgres_ci_data' - Stores PostgreSQL data for SecondStage chat memory
+  postgres_ci_data:

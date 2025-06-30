@@ -1,0 +1,12 @@
+---
+# BuildKit version to install
+buildkit_version: "v0.23.1"
+
+# Installation directories
+buildkit_install_dir: "/usr/local/bin"
+buildkit_tmp_dir: "/tmp"
+
+# Docker registry credentials (optional)
+docker_username: "your-username"
+docker_password: "your-password"
+# docker_registry_url: "https://index.docker.io/v1/"

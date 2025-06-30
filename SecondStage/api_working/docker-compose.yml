@@ -1,0 +1,31 @@
+services:
+  ci-anomaly-detector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ci-anomaly-detector-api
+    restart: ${RESTART_POLICY:-unless-stopped}
+    env_file:
+      - .env.production
+    ports:
+      - "${SERVER_PORT:-8282}:${SERVER_PORT:-8282}"
+    volumes:
+      - app-logs:/app/logs
+    networks:
+      - ci-anomaly-detector-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${SERVER_PORT:-8282}/api/dashboard/jobs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  ci-anomaly-detector-network:
+    driver: bridge
+    name: ci-anomaly-detector-net
+
+volumes:
+  app-logs:
+    driver: local
+    name: ci-anomaly-detector-api-logs

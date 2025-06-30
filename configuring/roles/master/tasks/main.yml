@@ -1,0 +1,81 @@
+---
+#- name: Initialize Kubernetes cluster
+#  command: kubeadm init --pod-network-cidr=10.0.0.0/16
+
+- name: Set a hostname for (MASTER)
+  ansible.builtin.hostname:
+    name: "{{ master_hostname }}" # k8smaster
+
+- name: Check if the master node is already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubeadm_init
+
+- name: Reset kubeadm if previous initialization failed
+  command: kubeadm reset --force
+  when: kubeadm_init.stat.exists == false
+  ignore_errors: yes
+
+- name: Verify containerd is running and responsive
+  shell: |
+    systemctl is-active containerd
+    crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock version
+  register: containerd_check
+  failed_when: containerd_check.rc != 0
+  when: kubeadm_init.stat.exists == false
+
+- name: Initialize the master node with containerd runtime
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/containerd/containerd.sock
+  when: kubeadm_init.stat.exists == false # Only run if the master node is not already initialized
+
+- name: Create .kube directory
+  file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: 0755
+  when: kubeadm_init.stat.exists == false # Only run if the master node is not already initialized
+
+- name: Copy the kube config file
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/ubuntu/.kube/config
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: 0644
+  when: kubeadm_init.stat.exists == false # Only run if the master node is not already initialized
+
+- name: Install calico CNI
+  command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+  become: false
+
+- name: Get the token for joining the worker nodes
+  shell: kubeadm token create  --print-join-command
+  register: kubernetes_join_command
+
+- name: Display registered output
+  debug:
+    var: kubernetes_join_command.stdout_lines
+
+- name: Copy join command to local file
+  local_action: copy content="{{ kubernetes_join_command.stdout_lines[0] }}" dest="./join-command"
+  become: false
+
+- name: Unarchive Helm binary
+  ansible.builtin.unarchive:
+    src: https://get.helm.sh/helm-v3.11.0-linux-amd64.tar.gz
+    dest: /usr/local/bin
+    extra_opts: "--strip-components=1"
+    owner: root
+    group: root
+    mode: 0755
+    remote_src: true
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Get facts about cluster membership
+  shell: kubectl get nodes
+  register: cluster_info
+  become: false
