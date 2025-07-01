@@ -89,57 +89,19 @@
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
 
-- name: Copy LiftOffStage ZIP to target node
-  ansible.builtin.copy:
-    src: "LiftOffStage.zip"
-    dest: "/tmp/LiftOffStage.zip"
-    mode: '0644'
-  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+# - name: Copy LiftOffStage ZIP to target node
+#   ansible.builtin.copy:
+#     src: "LiftOffStage.zip"
+#     dest: "/tmp/LiftOffStage.zip"
+#     mode: '0644'
+#   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
-- name: Check if LiftOffStage.zip exists and get details
-  shell: |
-    echo "=== File listing ==="
-    ls -la /tmp
-    ls -la /tmp/LiftOffStage.zip 2>/dev/null || echo "File not found"
-    echo "=== File type ==="
-    file /tmp/LiftOffStage.zip 2>/dev/null || echo "Cannot determine file type"
-    echo "=== File size ==="
-    du -h /tmp/LiftOffStage.zip 2>/dev/null || echo "Cannot get file size"
-  register: file_debug
-  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
-- name: Show file debug info
-  debug:
-    var: file_debug.stdout_lines
-
-- name: Show file contents
-  shell: cat /tmp/LiftOffStage.zip
-  register: file_contents
-  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
-
-- name: Display file contents
-  debug:
-    var: file_contents.stdout
-
-- name: Check if LiftOffStage.zip exists and get details LOCALHOST
-  shell: |
-    echo "=== File listing ==="
-    ls -la ./roles/liftoffstage/files/LiftOffStage.zip 2>/dev/null || echo "File not found"
-    echo "=== File type ==="
-    file ./roles/liftoffstage/files/LiftOffStage.zip 2>/dev/null || echo "Cannot determine file type"
-    echo "=== File size ==="
-    du -h ./roles/liftoffstage/files/LiftOffStage.zip 2>/dev/null || echo "Cannot get file size"
-  register: file_debug_local
-  delegate_to: localhost    
-
-- name: Show file debug info
-  debug:
-    var: file_debug_local.stdout_lines
     
 
 - name: Extract LiftOffStage application
   ansible.builtin.unarchive:
-    src: "/tmp/LiftOffStage.zip"
+    src: "https://media.githubusercontent.com/media/hasan2001jk/Thesis/refs/heads/master/configuring/roles/liftoffstage/files/LiftOffStage.zip?download=true"
     dest: "/opt/liftoffstage/app-files/"
     remote_src: yes
     owner: ubuntu
@@ -147,11 +109,11 @@
     mode: '0755'
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
-- name: Clean up ZIP file
-  ansible.builtin.file:
-    path: "/tmp/LiftOffStage.zip"
-    state: absent
-  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+# - name: Clean up ZIP file
+#   ansible.builtin.file:
+#     path: "/tmp/LiftOffStage.zip"
+#     state: absent
+#   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
 - name: Verify copied files structure
   stat:
