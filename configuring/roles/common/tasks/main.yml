@@ -227,9 +227,12 @@
       - gnupg-agent
       - software-properties-common
       - unzip
+      - gzip
       - bzip2
       - xz-utils
       - p7zip-full
+      - zstd
+      - tar
   tags:
     - system
     - packages
