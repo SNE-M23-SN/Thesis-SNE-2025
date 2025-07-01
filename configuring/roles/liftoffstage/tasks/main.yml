@@ -96,6 +96,22 @@
     mode: '0644'
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
+- name: Check if LiftOffStage.zip exists and get details
+  shell: |
+    echo "=== File listing ==="
+    ls -la /tmp
+    ls -la /tmp/LiftOffStage.zip 2>/dev/null || echo "File not found"
+    echo "=== File type ==="
+    file /tmp/LiftOffStage.zip 2>/dev/null || echo "Cannot determine file type"
+    echo "=== File size ==="
+    du -h /tmp/LiftOffStage.zip 2>/dev/null || echo "Cannot get file size"
+  register: file_debug
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+
+- name: Show file debug info
+  debug:
+    var: file_debug.stdout_lines
+
 - name: Extract LiftOffStage application
   ansible.builtin.unarchive:
     src: "/tmp/LiftOffStage.zip"
