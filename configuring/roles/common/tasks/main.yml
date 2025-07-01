@@ -227,6 +227,9 @@
       - gnupg-agent
       - software-properties-common
       - unzip
+      - bzip2
+      - xz-utils
+      - p7zip-full
   tags:
     - system
     - packages
