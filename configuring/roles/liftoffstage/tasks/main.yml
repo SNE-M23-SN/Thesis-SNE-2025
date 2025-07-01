@@ -89,19 +89,18 @@
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
 
-# - name: Copy LiftOffStage ZIP to target node
-#   ansible.builtin.copy:
-#     src: "LiftOffStage.zip"
-#     dest: "/tmp/LiftOffStage.zip"
-#     mode: '0644'
-#   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+- name: Copy LiftOffStage ZIP to target node
+  ansible.builtin.copy:
+    src: "LiftOffStage.zip"
+    dest: "/tmp/liftoffstage.zip"
+    mode: '0644'
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
 
-    
 
 - name: Extract LiftOffStage application
   ansible.builtin.unarchive:
-    src: "https://media.githubusercontent.com/media/hasan2001jk/Thesis/refs/heads/master/configuring/roles/liftoffstage/files/LiftOffStage.zip?download=true"
+    src: "/tmp/liftoffstage.zip"
     dest: "/opt/liftoffstage/app-files/"
     remote_src: yes
     owner: ubuntu
@@ -109,11 +108,11 @@
     mode: '0755'
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
-# - name: Clean up ZIP file
-#   ansible.builtin.file:
-#     path: "/tmp/LiftOffStage.zip"
-#     state: absent
-#   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
+- name: Clean up ZIP file
+  ansible.builtin.file:
+    path: "/tmp/liftoffstage.zip"
+    state: absent
+  delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
 - name: Verify copied files structure
   stat:
