@@ -92,13 +92,13 @@
 - name: Copy LiftOffStage ZIP to target node
   ansible.builtin.copy:
     src: "LiftOffStage.zip"
-    dest: "/tmp/liftoffstage.zip"
+    dest: "/tmp/LiftOffStage.zip"
     mode: '0644'
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
 - name: Extract LiftOffStage application
   ansible.builtin.unarchive:
-    src: "/tmp/liftoffstage.zip"
+    src: "/tmp/LiftOffStage.zip"
     dest: "/opt/liftoffstage/app-files/"
     remote_src: yes
     owner: ubuntu
@@ -108,7 +108,7 @@
 
 - name: Clean up ZIP file
   ansible.builtin.file:
-    path: "/tmp/liftoffstage.zip"
+    path: "/tmp/LiftOffStage.zip"
     state: absent
   delegate_to: "{{ liftoffstage_target_node | default('worker') }}"
 
