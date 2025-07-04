@@ -1,6 +1,11 @@
 ---
 # SAST Role Tasks - Docker Engine with TLS Certificate Integration
 
+- name: Check current working directory
+  command: pwd
+  register: current_dir
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
 - name: List current directory contents
   command: ls -la
   register: current_ls
