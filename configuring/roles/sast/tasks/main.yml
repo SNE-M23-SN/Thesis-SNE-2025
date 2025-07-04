@@ -189,7 +189,7 @@
 
 - name: Copy Docker images to remote node
   copy:
-    src: "{{ playbook_dir }}/Docker-images/{{ item.tar_file }}"
+    src: "{{ playbook_dir }}/../Docker-images/{{ item.tar_file }}"
     dest: "/tmp/{{ item.tar_file }}"
   loop: "{{ sast_image_mapping }}"
   delegate_to: localhost
