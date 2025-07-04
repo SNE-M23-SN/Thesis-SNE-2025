@@ -2,189 +2,178 @@
 # SAST Role Tasks - Docker Engine with TLS Certificate Integration
 
 
-# - name: Set a hostname for (WORKER)
-#   ansible.builtin.hostname:
-#     name: "{{ worker_hostname }}"
+- name: Set a hostname for (WORKER)
+  ansible.builtin.hostname:
+    name: "{{ worker_hostname }}"
 
 
-# # ===== System Preparation =====
-# - name: Update apt cache
-#   apt:
-#     update_cache: yes
-#     cache_valid_time: 3600
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+# ===== System Preparation =====
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# - name: Install required system packages
-#   apt:
-#     name: "{{ docker_dependencies }}"
-#     state: present
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+- name: Install required system packages
+  apt:
+    name: "{{ docker_dependencies }}"
+    state: present
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# # ===== Docker Repository Setup =====
-# - name: Add Docker GPG key
-#   apt_key:
-#     url: "{{ docker_gpg_key_url }}"
-#     id: "{{ docker_gpg_key_id }}"
-#     state: present
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+# ===== Docker Repository Setup =====
+- name: Add Docker GPG key
+  apt_key:
+    url: "{{ docker_gpg_key_url }}"
+    id: "{{ docker_gpg_key_id }}"
+    state: present
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# - name: Add Docker repository
-#   apt_repository:
-#     repo: "deb [arch=amd64] {{ docker_repo_url }} {{ ansible_distribution_release }} stable"
-#     state: present
-#     update_cache: yes
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+- name: Add Docker repository
+  apt_repository:
+    repo: "deb [arch=amd64] {{ docker_repo_url }} {{ ansible_distribution_release }} stable"
+    state: present
+    update_cache: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# # ===== Docker Installation =====
-# - name: Install Docker packages
-#   apt:
-#     name: "{{ docker_packages }}"
-#     state: present
-#     update_cache: yes
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+# ===== Docker Installation =====
+- name: Install Docker packages
+  apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# - name: Start and enable Docker service
-#   systemd:
-#     name: docker
-#     state: started
-#     enabled: yes
-#     daemon_reload: yes
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+- name: Start and enable Docker service
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+    daemon_reload: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# # ===== User Configuration =====
-# - name: Create docker group
-#   group:
-#     name: "{{ docker_group }}"
-#     state: present
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+# ===== User Configuration =====
+- name: Create docker group
+  group:
+    name: "{{ docker_group }}"
+    state: present
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# - name: Add user to docker group
-#   user:
-#     name: "{{ docker_user }}"
-#     groups: "{{ docker_group }}"
-#     append: yes
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+- name: Add user to docker group
+  user:
+    name: "{{ docker_user }}"
+    groups: "{{ docker_group }}"
+    append: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# # ===== Certificate Directory Setup =====
-# - name: Create Docker certificates directory
-#   file:
-#     path: "{{ docker_certs_dir }}"
-#     state: directory
-#     mode: '0755'
-#     owner: root
-#     group: root
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+# ===== Certificate Directory Setup =====
+- name: Create Docker certificates directory
+  file:
+    path: "{{ docker_certs_dir }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# # ===== Certificate Transfer =====
-# - name: Check if certificates exist on control node
-#   stat:
-#     path: "{{ local_certs_dir }}/{{ item.value }}"
-#   loop: "{{ cert_files | dict2items }}"
-#   register: cert_files_check
-#   delegate_to: localhost
-#   run_once: true
-#   become: false
+# ===== Certificate Transfer =====
+- name: Check if certificates exist on control node
+  stat:
+    path: "{{ local_certs_dir }}/{{ item.value }}"
+  loop: "{{ cert_files | dict2items }}"
+  register: cert_files_check
+  delegate_to: localhost
+  run_once: true
+  become: false
 
-# - name: Fail if certificates are missing
-#   fail:
-#     msg: "Certificate file {{ item.item.value }} not found in {{ local_certs_dir }}. Please run FirstStage role first to generate certificates."
-#   when: not item.stat.exists
-#   loop: "{{ cert_files_check.results }}"
-#   delegate_to: localhost
-#   run_once: true
+- name: Fail if certificates are missing
+  fail:
+    msg: "Certificate file {{ item.item.value }} not found in {{ local_certs_dir }}. Please run FirstStage role first to generate certificates."
+  when: not item.stat.exists
+  loop: "{{ cert_files_check.results }}"
+  delegate_to: localhost
+  run_once: true
 
-# - name: Copy CA certificate to target node
-#   copy:
-#     src: "{{ local_certs_dir }}/{{ cert_files.ca_cert }}"
-#     dest: "{{ docker_certs_dir }}/{{ cert_files.ca_cert }}"
-#     mode: "{{ cert_file_permissions.ca_cert }}"
-#     owner: root
-#     group: root
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+- name: Copy CA certificate to target node
+  copy:
+    src: "{{ local_certs_dir }}/{{ cert_files.ca_cert }}"
+    dest: "{{ docker_certs_dir }}/{{ cert_files.ca_cert }}"
+    mode: "{{ cert_file_permissions.ca_cert }}"
+    owner: root
+    group: root
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# - name: Copy server certificate to target node
-#   copy:
-#     src: "{{ local_certs_dir }}/{{ cert_files.server_cert }}"
-#     dest: "{{ docker_certs_dir }}/{{ cert_files.server_cert }}"
-#     mode: "{{ cert_file_permissions.server_cert }}"
-#     owner: root
-#     group: root
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
+- name: Copy server certificate to target node
+  copy:
+    src: "{{ local_certs_dir }}/{{ cert_files.server_cert }}"
+    dest: "{{ docker_certs_dir }}/{{ cert_files.server_cert }}"
+    mode: "{{ cert_file_permissions.server_cert }}"
+    owner: root
+    group: root
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
-# - name: Copy server key to target node
-#   copy:
-#     src: "{{ local_certs_dir }}/{{ cert_files.server_key }}"
-#     dest: "{{ docker_certs_dir }}/{{ cert_files.server_key }}"
-#     mode: "{{ cert_file_permissions.server_key }}"
-#     owner: root
-#     group: root
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-
-
-
-# # ===== Docker Service Configuration =====
-# - name: Backup original Docker service file
-#   copy:
-#     src: "{{ docker_service_file }}"
-#     dest: "{{ docker_service_file }}.backup"
-#     remote_src: yes
-#     mode: '0644'
-#     owner: root
-#     group: root
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-
-# - name: Read current Docker service file
-#   slurp:
-#     src: "{{ docker_service_file }}"
-#   register: docker_service_content
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-
-# - name: Get current ExecStart line
-#   shell: grep '^ExecStart=' "{{ docker_service_file }}" | head -1
-#   register: current_execstart
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-
-# - name: Update Docker service ExecStart with TLS flags (preserving existing flags)
-#   lineinfile:
-#     path: "{{ docker_service_file }}"
-#     regexp: '^ExecStart=/usr/bin/dockerd'
-#     line: "{{ current_execstart.stdout }} {{ docker_tls_flags }}"
-#     backup: yes
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-#   notify: restart docker
-
-# # ===== Service Management =====
-# - name: Reload systemd daemon
-#   systemd:
-#     daemon_reload: yes
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-
-# - name: Restart Docker service to apply TLS configuration
-#   systemd:
-#     name: docker
-#     state: restarted
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-
-# # ===== Verification =====
-# - name: Wait for Docker daemon to be ready
-#   wait_for:
-#     port: "{{ docker_daemon_port }}"
-#     host: "{{ hostvars[sast_target_node | default('worker')].ansible_host }}"
-#     timeout: 60
-#   delegate_to: localhost
-#   become: false
+- name: Copy server key to target node
+  copy:
+    src: "{{ local_certs_dir }}/{{ cert_files.server_key }}"
+    dest: "{{ docker_certs_dir }}/{{ cert_files.server_key }}"
+    mode: "{{ cert_file_permissions.server_key }}"
+    owner: root
+    group: root
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
 
-# # ===== SAST Tools Image Preparation =====
-# - name: Pull SAST tool images
-#   community.docker.docker_image:
-#     name: "{{ item }}"
-#     source: pull
-#     state: present
-#   loop: "{{ sast_images }}"
-#   delegate_to: "{{ sast_target_node | default('worker') }}"
-#   ignore_errors: yes
-#   register: image_pull_results
+
+# ===== Docker Service Configuration =====
+- name: Backup original Docker service file
+  copy:
+    src: "{{ docker_service_file }}"
+    dest: "{{ docker_service_file }}.backup"
+    remote_src: yes
+    mode: '0644'
+    owner: root
+    group: root
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: Read current Docker service file
+  slurp:
+    src: "{{ docker_service_file }}"
+  register: docker_service_content
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: Get current ExecStart line
+  shell: grep '^ExecStart=' "{{ docker_service_file }}" | head -1
+  register: current_execstart
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: Update Docker service ExecStart with TLS flags (preserving existing flags)
+  lineinfile:
+    path: "{{ docker_service_file }}"
+    regexp: '^ExecStart=/usr/bin/dockerd'
+    line: "{{ current_execstart.stdout }} {{ docker_tls_flags }}"
+    backup: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+  notify: restart docker
+
+# ===== Service Management =====
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+- name: Restart Docker service to apply TLS configuration
+  systemd:
+    name: docker
+    state: restarted
+  delegate_to: "{{ sast_target_node | default('worker') }}"
+
+# ===== Verification =====
+- name: Wait for Docker daemon to be ready
+  wait_for:
+    port: "{{ docker_daemon_port }}"
+    host: "{{ hostvars[sast_target_node | default('worker')].ansible_host }}"
+    timeout: 60
+  delegate_to: localhost
+  become: false
+
 
 
 - name: Copy Docker images to remote node
