@@ -65,7 +65,7 @@
   hosts: sast
   become: yes
   roles:
-    - common
+    # - common
     - sast
    # - kubernetes
    # - worker
