@@ -1,34 +1,6 @@
 ---
 # SAST Role Tasks - Docker Engine with TLS Certificate Integration
 
-- name: Check current working directory
-  command: pwd
-  register: current_dir
-  delegate_to: "{{ sast_target_node | default('worker') }}"
-
-- name: List current directory contents
-  command: ls -la
-  register: current_ls
-  delegate_to: "{{ sast_target_node | default('worker') }}"
-
-- name: Display current directory info
-  debug:
-    msg: |
-      Current working directory: {{ current_dir.stdout }}
-      Current directory contents:
-      {{ current_ls.stdout }}
-
-- name: List current directory contents
-  command: ls -la ../
-  register: current_lss
-  delegate_to: "{{ sast_target_node | default('worker') }}"
-
-- name: Display current directory info
-  debug:
-    msg: |
-      Current working directory: {{ current_dir.stdout }}
-      Current directory contents:
-      {{ current_lss.stdout }}
 
 # - name: Set a hostname for (WORKER)
 #   ansible.builtin.hostname:
@@ -221,7 +193,7 @@
 - name: Load SAST tool images from tar files
   community.docker.docker_image:
     name: "{{ item.image_name }}"
-    load_path: "{{ playbook_dir }}/../Docker-images/{{ item.tar_file }}"
+    load_path: "./Docker-images/{{ item.tar_file }}"
     source: load
     state: present
   loop: "{{ sast_image_mapping }}"
