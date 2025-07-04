@@ -8,57 +8,57 @@
         timeout: 300
         connect_timeout: 60
 
-- name: Setup Kubernetes Cluster
-  hosts: master, liftoffstage, firststage, secondstage, thirdstage
-  become: yes
-  roles:
-    - common
-    - containerd
-    - buildkit
-    - kubernetes
-  vars_files:
-    - "{{ inventory_dir }}/vault/secrets.yml"
-  vars:
-    docker_username: "{{ vault_docker_username }}"
-    docker_password: "{{ vault_docker_password }}"
+# - name: Setup Kubernetes Cluster
+#   hosts: master, liftoffstage, firststage, secondstage, thirdstage
+#   become: yes
+#   roles:
+#     - common
+#     - containerd
+#     - buildkit
+#     - kubernetes
+#   vars_files:
+#     - "{{ inventory_dir }}/vault/secrets.yml"
+#   vars:
+#     docker_username: "{{ vault_docker_username }}"
+#     docker_password: "{{ vault_docker_password }}"
 
-- name: Setup Kubernetes Cluster (MASTER)
-  hosts: master
-  become: yes
-  roles:
-    - master
-  vars_files:
-    - "{{ inventory_dir }}/vault/secrets.yml"
-  vars:
-    master_hostname: "{{ vault_master_hostname }}"
+# - name: Setup Kubernetes Cluster (MASTER)
+#   hosts: master
+#   become: yes
+#   roles:
+#     - master
+#   vars_files:
+#     - "{{ inventory_dir }}/vault/secrets.yml"
+#   vars:
+#     master_hostname: "{{ vault_master_hostname }}"
 
-- name: Setup Kubernetes Cluster (LiftOffStage)
-  hosts: liftoffstage
-  become: yes
-  roles:
-    - worker
-    - liftoffstage
-  vars_files:
-    - "{{ inventory_dir }}/vault/secrets.yml"
-  vars:
-    worker_hostname: "{{ vault_liftoffstage_hostname }}"
-    ns_liftoffstage: "{{ vault_liftoffstage_namespace | default('liftoffstage') }}"
-    liftoffstage_target_node: "{{ vault_liftoffstage_target_node | default('liftoffstage') }}"
-    postgres_ci_image_repo: "{{ vault_docker_repo }}"
+# - name: Setup Kubernetes Cluster (LiftOffStage)
+#   hosts: liftoffstage
+#   become: yes
+#   roles:
+#     - worker
+#     - liftoffstage
+#   vars_files:
+#     - "{{ inventory_dir }}/vault/secrets.yml"
+#   vars:
+#     worker_hostname: "{{ vault_liftoffstage_hostname }}"
+#     ns_liftoffstage: "{{ vault_liftoffstage_namespace | default('liftoffstage') }}"
+#     liftoffstage_target_node: "{{ vault_liftoffstage_target_node | default('liftoffstage') }}"
+#     postgres_ci_image_repo: "{{ vault_docker_repo }}"
 
 
-- name: Setup Kubernetes Cluster (FirstStage-Preparation)
-  hosts: firststage
-  become: yes
-  roles:
-    - worker
-    - firststage-prep
-  vars_files:
-    - "{{ inventory_dir }}/vault/secrets.yml"
-  vars:
-    worker_hostname: "{{ vault_firststage_hostname }}"
-    sast_target_node: "{{ vault_sast_target_node | default('sast') }}"
-    firststage_target_node: "{{ vault_firststage_target_node }}"
+# - name: Setup Kubernetes Cluster (FirstStage-Preparation)
+#   hosts: firststage
+#   become: yes
+#   roles:
+#     - worker
+#     - firststage-prep
+#   vars_files:
+#     - "{{ inventory_dir }}/vault/secrets.yml"
+#   vars:
+#     worker_hostname: "{{ vault_firststage_hostname }}"
+#     sast_target_node: "{{ vault_sast_target_node | default('sast') }}"
+#     firststage_target_node: "{{ vault_firststage_target_node }}"
 
 
 - name: Setup Kubernetes Cluster (SAST)
