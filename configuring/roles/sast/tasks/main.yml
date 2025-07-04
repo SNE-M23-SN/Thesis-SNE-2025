@@ -173,50 +173,46 @@
   delegate_to: localhost
   become: false
 
-#- name: Verify Docker TLS configuration
-#  uri:
-#    url: "https://{{ hostvars[sast_target_node | default('worker')].ansible_host }}:{{ docker_daemon_port }}/version"
-#    method: GET
-#    ca_path: "{{ local_certs_dir }}/{{ cert_files.ca_cert }}"
-#    validate_certs: no
-#  register: docker_version_check
-#  delegate_to: localhost
-#  ignore_errors: yes
-#  become: false
 
-# ===== SAST Tools Image Preparation =====
-- name: Pull SAST tool images
+# # ===== SAST Tools Image Preparation =====
+# - name: Pull SAST tool images
+#   community.docker.docker_image:
+#     name: "{{ item }}"
+#     source: pull
+#     state: present
+#   loop: "{{ sast_images }}"
+#   delegate_to: "{{ sast_target_node | default('worker') }}"
+#   ignore_errors: yes
+#   register: image_pull_results
+
+# ===== SAST Tools Image Loading =====
+- name: Load SAST tool images from tar files
   community.docker.docker_image:
-    name: "{{ item }}"
-    source: pull
+    name: "{{ item.image_name }}"
+    load_path: "../Docker-images/{{ item.tar_file }}"
+    source: load
     state: present
-  loop: "{{ sast_images }}"
+  loop: "{{ sast_image_mapping }}"
   delegate_to: "{{ sast_target_node | default('worker') }}"
-  #environment:
-  #  DOCKER_HOST: "tcp://{{ hostvars[sast_target_node | default('worker')].ansible_host }}:{{ docker_daemon_port }}"
-  #  DOCKER_TLS_VERIFY: "1"
-  #  DOCKER_CERT_PATH: "{{ local_certs_dir }}"
   ignore_errors: yes
-  register: image_pull_results
+  register: image_load_results
 
-- name: Display image pull results
+
+- name: Display image load results
   debug:
     msg: |
-      📦 SAST Image Pull Results:
-      {% for result in image_pull_results.results %}
-      - {{ result.item }}: {{ result.failed | default(false) | ternary('❌ Failed', '✅ Success') }}
+      📦 SAST Image Load Results:
+      {% for result in image_load_results.results %}
+      - {{ result.item.tar_file }} ({{ result.item.image_name }}): {{ result.failed | default(false) | ternary('❌ Failed', '✅ Success') }}
       {% endfor %}
-  when: image_pull_results is defined
+  when: image_load_results is defined
 
-- name: Verify pulled images
+
+- name: Verify loaded images
   community.docker.docker_image_info:
-    name: "{{ item }}"
-  loop: "{{ sast_images }}"
+    name: "{{ item.image_name }}"
+  loop: "{{ sast_image_mapping }}"
   delegate_to: "{{ sast_target_node | default('worker') }}"
-#  environment:
-#    DOCKER_HOST: "tcp://{{ hostvars[sast_target_node | default('worker')].ansible_host }}:{{ docker_daemon_port }}"
-#    DOCKER_TLS_VERIFY: "1"
-#    DOCKER_CERT_PATH: "{{ local_certs_dir }}"
   register: image_verification
   ignore_errors: yes
 

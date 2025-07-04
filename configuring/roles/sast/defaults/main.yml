@@ -56,4 +56,31 @@ sast_images:
   - "horuszup/horusec-js:v1.2.0"
   - "aquasec/trivy:0.61.0"
 
+# # SAST Images to load
+# sast_tar_files:
+#   - alpine-git.tar
+#   - aquasec-trivy.tar
+#   - bearer.tar
+#   - horuszup-cli.tar
+#   - horuszup-generic.tar
+#   - horuszup-js.tar
+#   - horuszup-shell.tar
+#   - semgrep.tar
 
+sast_image_mapping:
+  - tar_file: alpine-git.tar
+    image_name: alpine/git:v2.47.2
+  - tar_file: aquasec-trivy.tar
+    image_name: aquasec/trivy:0.61.0
+  - tar_file: bearer.tar
+    image_name: bearer/bearer:1.49.0
+  - tar_file: horuszup-generic.tar
+    image_name: horuszup/horusec-generic:v1.2.0
+  - tar_file: horuszup-shell.tar
+    image_name: horuszup/horusec-shell:v1.0.1
+  - tar_file: horuszup-js.tar
+    image_name: horuszup/horusec-js:v1.2.0
+  - tar_file: horuszup-cli.tar
+    image_name: horuszup/horusec-cli:v2.9.0-beta.3
+  - tar_file: semgrep.tar
+    image_name: semgrep/semgrep:pro-sha-2e03a2a6e75d2cb4bdf5275148b9397e3c79796a
