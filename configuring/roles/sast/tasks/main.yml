@@ -192,10 +192,7 @@
     src: "{{ playbook_dir }}/../Docker-images/{{ item.tar_file }}"
     dest: "/tmp/{{ item.tar_file }}"
   loop: "{{ sast_image_mapping }}"
-  delegate_to: localhost
-  run_once: true
-  become: false
-
+  delegate_to: "{{ sast_target_node | default('worker') }}"
 
 
 # ===== SAST Tools Image Loading =====
