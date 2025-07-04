@@ -189,7 +189,7 @@
 - name: Load SAST tool images from tar files
   community.docker.docker_image:
     name: "{{ item.image_name }}"
-    load_path: "../Docker-images/{{ item.tar_file }}"
+    load_path: "{{ playbook_dir }}/Docker-images/{{ item.tar_file }}"
     source: load
     state: present
   loop: "{{ sast_image_mapping }}"
