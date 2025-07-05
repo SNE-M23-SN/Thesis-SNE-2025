@@ -71,7 +71,7 @@ queue_dlq_name: "Jenkins.dlq"
 queue_ttl: "150000"
 
 # Diploma Application Settings
-diploma_log_level: "DEBUG"
+diploma_log_level: "INFO"
 
 # Diploma Resource Limits
 diploma_memory_request: "4Gi"
