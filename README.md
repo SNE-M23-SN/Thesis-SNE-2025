@@ -16,10 +16,10 @@ The DevSecOps AI Platform is a multi-stage, cloud-native solution that provides:
 ## 🏗️ **System Architecture**
 
 ### **Multi-Stage Pipeline Architecture**
-![Platform Overview Architecture](Tofu-Ansible.png)
+![Platform Overview Architecture](Tofu-Ansible.jpg)
 
 ### **Infrastructure Architecture**
-![Platform Overview Architecture](Yandex-K8S.png)
+![Platform Overview Architecture](Yandex-K8S.jpg)
 
 ## 📦 **Platform Components**
 
