@@ -71,4 +71,5 @@ jobs:
         GOOGLE_GEMINI_API_KEY: ${{ secrets.GOOGLE_GEMINI_API_KEY }}
         DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-        DOCKER_REPO: ${{ secrets.DOCKER_REPO }}           
+        DOCKER_REPO: ${{ secrets.DOCKER_REPO }} 
+        YANDEX_REPO_PASSWORD: ${{ secrets.YANDEX_TOKEN }}
