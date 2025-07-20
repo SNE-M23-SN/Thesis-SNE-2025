@@ -2,6 +2,9 @@
 
 A comprehensive, enterprise-grade DevSecOps platform that integrates AI-powered security analysis, automated CI/CD monitoring, and intelligent anomaly detection across the entire software development lifecycle.
 
+<img width="1507" height="853" alt="image" src="https://github.com/user-attachments/assets/16bf6612-1e94-4f9a-8d78-dab4fd2f4039" />
+
+
 ## 🎯 **Platform Overview**
 
 The DevSecOps AI Platform is a multi-stage, cloud-native solution that provides:
