@@ -162,8 +162,6 @@
       --local context=/opt/secondstage/app-files/api_working \
       --local dockerfile=/opt/secondstage/app-files/api_working \
       --output type=image,name="{{ secondstage_image_repo }}:{{ secondstage_api_image_name | default('secondstage') }}-{{ secondstage_api_image_tag | default('api') }}",push=true
-  environment:
-    YANDEX_REPO_PASSWORD: "{{ yandex_pass }}"
   register: secondstage_api_build
   delegate_to: "{{ secondstage_target_node | default('worker') }}"
 
@@ -176,8 +174,6 @@
       --local context=/opt/secondstage/app-files/diploma_working \
       --local dockerfile=/opt/secondstage/app-files/diploma_working \
       --output type=image,name="{{ secondstage_image_repo }}:{{ secondstage_app_image_name | default('secondstage') }}-{{ secondstage_app_image_tag | default('app') }}",push=true
-  environment:
-    YANDEX_REPO_PASSWORD: "{{ yandex_pass }}"
   register: secondstage_app_build
   delegate_to: "{{ secondstage_target_node | default('worker') }}"
 
