@@ -13,19 +13,6 @@ java {
 	}
 }
 
-repositories {
-	maven {
-            name = "YandexCloud"
-            url = uri("https://registry.yandexcloud.net/maven/cn1qmgeq010l84kidh2a")
-            credentials {
-               username = System.getenv("YANDEX_REPO_USERNAME") ?: "oauth"
-               password = System.getenv("YANDEX_REPO_PASSWORD") ?: ""
-            }
-        }
-	maven { url 'https://maven.wso2.org/nexus/content/repositories/public' }
-	mavenCentral()
-	maven { url 'https://repo.spring.io/milestone' }
-}
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'

@@ -108,7 +108,6 @@
     vpn_config_file: "{{ vault_vpn_config_file | default('Canada, Quebec S2.ovpn') }}"
     secondstage_target_node: "{{ vault_secondstage_target_node | default('secondstage') }}"
     secondstage_image_repo: "{{ vault_docker_repo }}"
-    yandex_pass: "{{ vault_yandex_pass }}"
 
 - name: Setup Kubernetes Cluster (ThirdStage)
   hosts: thirdstage

@@ -1,1 +1,23 @@
+// settings.gradle
+
+pluginManagement {
+    repositories {
+        maven {
+            url = uri('https://mvn-mirror.gitverse.ru')
+        }
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        maven {
+            url = uri('https://mvn-mirror.gitverse.ru')
+        }
+        mavenCentral() // Optional fallback if GitVerse mirrors Maven Central
+    }
+}
+
+
+// This is your project name
 rootProject.name = 'diploma'
